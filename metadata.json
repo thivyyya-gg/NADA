@@ -1,0 +1,8 @@
+{
+  "name": "Maestro Mentor",
+  "description": "A premium academic platform for music mentors to manage students, lessons, and earnings with a cinematic editorial interface.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

@@ -1,0 +1,44 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif-curvy: "Playfair Display", serif;
+  --font-serif-sturdy: "Libre Baskerville", serif;
+
+  --color-brown-50: #fdfaf9;
+  --color-brown-100: #f7ede8;
+  --color-brown-200: #ecd9d0;
+  --color-brown-300: #dab8a9;
+  --color-brown-400: #c18d76;
+  --color-brown-500: #ad6d51;
+  --color-brown-600: #9e5941;
+  --color-brown-700: #834836;
+  --color-brown-800: #6d3e30;
+  --color-brown-900: #5b352b;
+  --color-brown-950: #311a15;
+}
+
+@layer base {
+  body {
+    @apply font-sans text-brown-950;
+  }
+}
+
+/* Custom scrollbar for premium feel */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.2);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.4);
+}

@@ -655,6 +655,30 @@ const MOCK_MENTORS: MentorDetail[] = [
 
 // --- Components ---
 
+const PhoneFrame = ({ children, isDark }: { children: React.ReactNode, isDark: boolean }) => {
+  return (
+    <div className={`min-h-screen flex items-center justify-center p-0 sm:p-8 transition-colors duration-500 ${isDark ? 'bg-zinc-950' : 'bg-zinc-100'}`}>
+      {/* Phone Frame Container - Only visible on sm and up */}
+      <div className={`relative w-full sm:w-[400px] sm:h-[820px] sm:rounded-[3.5rem] sm:border-[12px] shadow-2xl overflow-hidden transition-all duration-500 ${
+        isDark ? 'sm:border-zinc-800 bg-black' : 'sm:border-zinc-200 bg-white'
+      }`}>
+        {/* Notch / Dynamic Island - Only visible on sm and up */}
+        <div className="hidden sm:flex absolute top-0 left-1/2 -translate-x-1/2 w-32 h-8 bg-black rounded-b-3xl z-[100] items-center justify-center">
+          <div className="w-12 h-1.5 bg-zinc-800 rounded-full" />
+        </div>
+        
+        {/* Content Area */}
+        <div className="h-full w-full overflow-hidden relative flex flex-col">
+          {children}
+        </div>
+        
+        {/* Home Indicator - Only visible on sm and up */}
+        <div className="hidden sm:block absolute bottom-2 left-1/2 -translate-x-1/2 w-32 h-1.5 bg-zinc-800/20 rounded-full z-[100]" />
+      </div>
+    </div>
+  );
+};
+
 const ProgressBar = ({ progress, className = "" }: { progress: number, className?: string }) => (
   <div className={`h-1 w-full bg-zinc-100 rounded-full overflow-hidden ${className}`}>
     <motion.div 
@@ -2701,7 +2725,7 @@ export default function App() {
     ];
 
     const SplashView = () => (
-      <div className="relative h-screen w-full overflow-hidden bg-black">
+      <div className="relative h-full w-full overflow-hidden bg-black">
         {/* Swipeable Cards */}
         <div className="h-full w-full relative">
           <AnimatePresence mode="wait">
@@ -2772,7 +2796,7 @@ export default function App() {
     );
 
     const RoleSelectionView = () => (
-      <div className={`min-h-screen p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
+      <div className={`min-h-full p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
         <button onClick={() => setAuthView('splash')} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center mb-12">
           <ChevronLeft size={20} />
         </button>
@@ -2809,7 +2833,7 @@ export default function App() {
     );
 
     const RegistrationView = ({ role }: { role: 'student' | 'mentor' }) => (
-      <div className={`min-h-screen p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
+      <div className={`min-h-full p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
         <button onClick={() => setAuthView('role-selection')} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center mb-12">
           <ChevronLeft size={20} />
         </button>
@@ -2874,7 +2898,7 @@ export default function App() {
     const SignInView = () => {
       const [roleTab, setRoleTab] = useState<'student' | 'mentor'>('student');
       return (
-        <div className={`min-h-screen p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
+        <div className={`min-h-full p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
           <button onClick={() => setAuthView('splash')} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center mb-12">
             <ChevronLeft size={20} />
           </button>
@@ -2958,7 +2982,7 @@ export default function App() {
     const ForgotPasswordView = () => {
       const [sent, setSent] = useState(false);
       return (
-        <div className={`min-h-screen p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
+        <div className={`min-h-full p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
           <button onClick={() => setAuthView('sign-in')} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center mb-12">
             <ChevronLeft size={20} />
           </button>
@@ -3006,7 +3030,7 @@ export default function App() {
     };
 
     const ResetPasswordView = () => (
-      <div className={`min-h-screen p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
+      <div className={`min-h-full p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
         <div className="mb-10 pt-12">
           <h2 className="text-3xl font-serif-sturdy mb-2">Reset Password</h2>
           <p className="text-zinc-500 text-sm">Create a new secure password for your account.</p>
@@ -4026,7 +4050,7 @@ export default function App() {
     );
   };
   const LogSessionView = () => (
-    <div className="px-5 pt-16 pb-24 bg-white text-zinc-900 min-h-screen">
+    <div className="px-5 pt-16 pb-24 bg-white text-zinc-900 min-h-full">
       <button onClick={() => setView('home')} className="flex items-center gap-1 text-zinc-400 mb-6 text-[10px] uppercase tracking-widest font-bold">
         <ChevronLeft size={14} /> Back
       </button>
@@ -4346,8 +4370,8 @@ export default function App() {
   // --- Main Render ---
 
   return (
-    <div className={`h-screen font-sans transition-colors duration-500 overflow-hidden ${isDark ? 'bg-black text-white' : 'bg-white text-zinc-900'}`}>
-      <div className="max-w-md mx-auto h-full relative overflow-hidden flex flex-col">
+    <PhoneFrame isDark={isDark}>
+      <div className={`w-full h-full font-sans transition-colors duration-500 overflow-hidden relative flex flex-col ${isDark ? 'bg-black text-white' : 'bg-white text-zinc-900'}`}>
         {!isAuth ? (
           <AuthContainer />
         ) : isStudent ? (
@@ -4530,6 +4554,6 @@ export default function App() {
         </>
       )}
       </div>
-    </div>
+    </PhoneFrame>
   );
 }

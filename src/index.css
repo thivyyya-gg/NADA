@@ -6,22 +6,34 @@
   --font-serif-curvy: "Playfair Display", serif;
   --font-serif-sturdy: "Libre Baskerville", serif;
 
-  --color-brown-50: #fdfaf9;
-  --color-brown-100: #f7ede8;
-  --color-brown-200: #ecd9d0;
-  --color-brown-300: #dab8a9;
-  --color-brown-400: #c18d76;
-  --color-brown-500: #ad6d51;
-  --color-brown-600: #9e5941;
-  --color-brown-700: #834836;
-  --color-brown-800: #6d3e30;
-  --color-brown-900: #5b352b;
-  --color-brown-950: #311a15;
+  --color-harbour-50: #f0f7f7;
+  --color-harbour-100: #d9eaea;
+  --color-harbour-200: #b3d5d5;
+  --color-harbour-300: #80baba;
+  --color-harbour-400: #4d9f9f;
+  --color-harbour-500: #1d4d4f;
+  --color-harbour-600: #1a4547;
+  --color-harbour-700: #163a3c;
+  --color-harbour-800: #123031;
+  --color-harbour-900: #0e2526;
+  --color-harbour-950: #071213;
+
+  --color-walnut-50: #fdfaf9;
+  --color-walnut-100: #f7ede8;
+  --color-walnut-200: #ecd9d0;
+  --color-walnut-300: #dab8a9;
+  --color-walnut-400: #c18d76;
+  --color-walnut-500: #3d2b1f;
+  --color-walnut-600: #35251b;
+  --color-walnut-700: #2d1f17;
+  --color-walnut-800: #251a13;
+  --color-walnut-900: #1d140f;
+  --color-walnut-950: #0f0a07;
 }
 
 @layer base {
   body {
-    @apply font-sans text-brown-950;
+    @apply font-sans text-walnut-950;
   }
 }
 

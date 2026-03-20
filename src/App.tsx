@@ -657,13 +657,13 @@ const MOCK_MENTORS: MentorDetail[] = [
 
 const PhoneFrame = ({ children, isDark }: { children: React.ReactNode, isDark: boolean }) => {
   return (
-    <div className={`min-h-screen flex items-center justify-center p-0 sm:p-8 transition-colors duration-500 ${isDark ? 'bg-zinc-950' : 'bg-zinc-100'}`}>
+    <div className={`min-h-screen flex items-center justify-center p-0 sm:p-8 transition-colors duration-500 ${isDark ? 'bg-zinc-950' : 'bg-zinc-50'}`}>
       {/* Phone Frame Container - Only visible on sm and up */}
-      <div className={`relative w-full sm:w-[400px] sm:h-[820px] sm:rounded-[3.5rem] sm:border-[12px] shadow-2xl overflow-hidden transition-all duration-500 ${
-        isDark ? 'sm:border-zinc-800 bg-black' : 'sm:border-zinc-200 bg-white'
+      <div className={`relative w-full sm:w-[400px] sm:h-[820px] sm:rounded-[3.5rem] sm:border-[14px] sm:border-zinc-900 shadow-2xl overflow-hidden transition-all duration-500 ${
+        isDark ? 'bg-black' : 'bg-white'
       }`}>
         {/* Notch / Dynamic Island - Only visible on sm and up */}
-        <div className="hidden sm:flex absolute top-0 left-1/2 -translate-x-1/2 w-32 h-8 bg-black rounded-b-3xl z-[100] items-center justify-center">
+        <div className="hidden sm:flex absolute top-0 left-1/2 -translate-x-1/2 w-32 h-8 bg-zinc-900 rounded-b-3xl z-[100] items-center justify-center">
           <div className="w-12 h-1.5 bg-zinc-800 rounded-full" />
         </div>
         
@@ -673,7 +673,7 @@ const PhoneFrame = ({ children, isDark }: { children: React.ReactNode, isDark: b
         </div>
         
         {/* Home Indicator - Only visible on sm and up */}
-        <div className="hidden sm:block absolute bottom-2 left-1/2 -translate-x-1/2 w-32 h-1.5 bg-zinc-800/20 rounded-full z-[100]" />
+        <div className="hidden sm:block absolute bottom-2 left-1/2 -translate-x-1/2 w-32 h-1.5 bg-zinc-800/40 rounded-full z-[100]" />
       </div>
     </div>
   );

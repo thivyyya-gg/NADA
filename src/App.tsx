@@ -47,6 +47,7 @@ import {
   Sun,
   Moon,
   Lock,
+  Inbox,
   Music,
   Guitar,
   Download,
@@ -62,7 +63,9 @@ import {
   Brain,
   Lightbulb,
   Target,
-  MessageCircle
+  MessageCircle,
+  Volume2,
+  Eye
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -72,7 +75,8 @@ import {
   signOut,
   User as FirebaseUser,
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { 
   collection, 
@@ -85,9 +89,64 @@ import {
   updateDoc,
   getDoc,
   setDoc,
-  getDocFromServer
+  getDocFromServer,
+  getDocs,
+  serverTimestamp
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
+
+// --- Firebase Error Handling ---
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 // --- Types ---
 
@@ -618,7 +677,7 @@ const MOCK_INSTRUMENTS: Instrument[] = [
     culture: 'Malay',
     story: 'A short-necked lute, the soul of Zapin music. It arrived via the spice trade and became a cornerstone of Malay folk music.',
     mentorCount: 2,
-    photo: 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&q=80&w=400'
+    photo: 'https://i.ibb.co/xSN37sLm/Gemini-Generated-Image-gemalannn.png'
   },
   {
     id: 'i2',
@@ -628,7 +687,7 @@ const MOCK_INSTRUMENTS: Instrument[] = [
     culture: 'Malay',
     story: 'Traditional violin adapted for Asli and Ghazal music, carrying haunting melodies through generations.',
     mentorCount: 3,
-    photo: 'https://images.unsplash.com/photo-1612225330812-01a9c6b355ec?auto=format&fit=crop&q=80&w=400'
+    photo: 'https://i.ibb.co/GvfXHrG4/bolamelayu.png'
   },
   {
     id: 'i3',
@@ -638,7 +697,7 @@ const MOCK_INSTRUMENTS: Instrument[] = [
     culture: 'Malay',
     story: 'A three-stringed bowed instrument used in Mak Yong. Its voice-like quality leads the traditional ensemble.',
     mentorCount: 2,
-    photo: 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?auto=format&fit=crop&q=80&w=400'
+    photo: 'https://i.ibb.co/8gY5sgcv/rebab.png'
   },
   // Indian
   {
@@ -649,17 +708,17 @@ const MOCK_INSTRUMENTS: Instrument[] = [
     culture: 'Indian',
     story: 'A pair of hand drums for complex Hindustani rhythms. The rhythmic heartbeat of Indian classical music.',
     mentorCount: 2,
-    photo: 'https://images.unsplash.com/photo-1599932840003-882298642398?auto=format&fit=crop&q=80&w=400'
+    photo: 'https://i.ibb.co/W4nnX01k/tablaa.png'
   },
   {
     id: 'i5',
     name: 'Sitar',
-    nativeName: 'सितार',
+    nativeName: 'सितار',
     type: 'Plucked',
     culture: 'Indian',
     story: 'A plucked string instrument with sympathetic strings. It defines the resonant sound of North Indian classical music.',
     mentorCount: 3,
-    photo: 'https://images.unsplash.com/photo-1615111784767-4d7c419f25d0?auto=format&fit=crop&q=80&w=400'
+    photo: 'https://i.ibb.co/ksXQF8Fn/sitarr.png'
   },
   {
     id: 'i7',
@@ -669,17 +728,17 @@ const MOCK_INSTRUMENTS: Instrument[] = [
     culture: 'Indian',
     story: 'A bamboo flute requiring immense breath control. It produces pastoral and divine melodies.',
     mentorCount: 2,
-    photo: 'https://images.unsplash.com/photo-1588449668365-d15e397f6787?auto=format&fit=crop&q=80&w=400'
+    photo: 'https://i.ibb.co/0V6VqwKR/bansuriflute.png'
   },
   {
     id: 'i8',
-    name: 'Violin Carnatic',
+    name: 'Carnatic Violin',
     nativeName: 'வயலின்',
     type: 'String',
     culture: 'Indian',
     story: 'Seated violin style mimicking the human voice. Held between the chest and foot in South Indian music.',
     mentorCount: 1,
-    photo: 'https://images.unsplash.com/photo-1460039230329-eb070fc6c77c?auto=format&fit=crop&q=80&w=400'
+    photo: 'https://i.ibb.co/wFmw5Tv2/carnaticviolin.png'
   },
   // Chinese
   {
@@ -690,17 +749,17 @@ const MOCK_INSTRUMENTS: Instrument[] = [
     culture: 'Chinese',
     story: 'The Chinese violin with a python-skin resonator. Its two strings create a deeply expressive, soulful sound.',
     mentorCount: 3,
-    photo: 'https://images.unsplash.com/photo-1605826832916-d00908649430?auto=format&fit=crop&q=80&w=400'
+    photo: 'https://i.ibb.co/BVqch6gw/erhuuuu.png'
   },
   {
     id: 'i11',
-    name: 'Pipa',
-    nativeName: '琵琶',
-    type: 'Plucked',
+    name: 'Dizi',
+    nativeName: '笛子',
+    type: 'Wind',
     culture: 'Chinese',
-    story: 'A pear-shaped lute known for rapid plucking. It can depict both delicate scenes and fierce battles.',
-    mentorCount: 3,
-    photo: 'https://images.unsplash.com/photo-1550933280-67469b232c63?auto=format&fit=crop&q=80&w=400'
+    story: 'A traditional Chinese transverse flute made of bamboo, featuring a unique buzzing membrane that produces a bright, resonant sound.',
+    mentorCount: 2,
+    photo: 'https://i.ibb.co/6RH3KmS7/Gemini-Generated-Image-1qjgkt1qjgkt1qjg.png'
   },
   {
     id: 'i12',
@@ -710,7 +769,7 @@ const MOCK_INSTRUMENTS: Instrument[] = [
     culture: 'Chinese',
     story: 'An ancient 21-string zither. Its cascading notes evoke flowing water and mountain echoes.',
     mentorCount: 2,
-    photo: 'https://images.unsplash.com/photo-1621274403997-37aae1848b40?auto=format&fit=crop&q=80&w=400'
+    photo: 'https://i.ibb.co/Lz53ZnkJ/guzhenggg.png'
   },
   // Borneo
   {
@@ -721,17 +780,17 @@ const MOCK_INSTRUMENTS: Instrument[] = [
     culture: 'Borneo',
     story: 'The famous boat-shaped lute from Sarawak. Traditionally used for healing rituals, its sound is ethereal.',
     mentorCount: 3,
-    photo: 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&q=80&w=400'
+    photo: 'https://i.ibb.co/nN935F09/sapee.png'
   },
   {
     id: 'i14',
-    name: 'Tongkungon',
-    nativeName: 'Tongkungon',
+    name: 'Tangkungon',
+    nativeName: 'Tangkungon',
     type: 'Plucked',
     culture: 'Borneo',
     story: 'A bamboo tube zither that mimics gong ensembles. A traditional instrument from the heart of Sabah.',
     mentorCount: 2,
-    photo: 'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?auto=format&fit=crop&q=80&w=400'
+    photo: 'https://i.ibb.co/ZRZCQyBC/tangkungon.png'
   },
   {
     id: 'i15',
@@ -741,7 +800,7 @@ const MOCK_INSTRUMENTS: Instrument[] = [
     culture: 'Borneo',
     story: 'A bamboo nose flute used for expressive melodies. It mimics the sounds of nature in the deep rainforest.',
     mentorCount: 1,
-    photo: 'https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&q=80&w=400'
+    photo: 'https://i.ibb.co/jvz0Y01V/turali.png'
   }
 ];
 
@@ -1474,14 +1533,14 @@ const BottomSheet = ({ isOpen, onClose, title, children, dark = true }: { isOpen
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200]"
+          className="fixed inset-0 bg-black/60 z-[200]"
           onClick={onClose}
         />
         <motion.div
           initial={{ y: '100%' }}
           animate={{ y: 0 }}
           exit={{ y: '100%' }}
-          transition={{ type: 'tween', ease: 'easeOut', duration: 0.3 }}
+          transition={{ type: 'tween', ease: [0.32, 0.72, 0, 1], duration: 0.35 }}
           className={`fixed bottom-0 left-0 right-0 z-[201] rounded-t-[2.5rem] max-h-[92vh] overflow-y-auto ${dark ? 'bg-zinc-900 text-white' : 'bg-white text-zinc-900'}`}
           onClick={e => e.stopPropagation()}
         >
@@ -1515,16 +1574,74 @@ const MOCK_NOTIFICATIONS: Notification[] = [
   }
 ];
 
+const calculateProfileProgress = (profile: any) => {
+  if (!profile) return 0;
+  const fields = [
+    { key: 'photo', weight: 15 },
+    { key: 'about', weight: 15 },
+    { key: 'specialisation', weight: 20, isArray: true },
+    { key: 'pricePerLesson', weight: 15, isNumber: true },
+    { key: 'location', weight: 10 },
+    { key: 'languages', weight: 10, isArray: true },
+    { key: 'introVideoUrl', weight: 15 },
+  ];
+  
+  let total = 0;
+  fields.forEach(f => {
+    if (f.isArray) {
+      if (profile[f.key]?.length > 0) total += f.weight;
+    } else if (f.isNumber) {
+      if (profile[f.key] > 0) total += f.weight;
+    } else {
+      if (profile[f.key]?.trim?.()?.length > 0) total += f.weight;
+    }
+  });
+  return total;
+};
+
 export default function App() {
   const [view, setView] = useState<View>('auth');
   const [isAuth, setIsAuth] = useState(false);
+  const [isStudent, setIsStudent] = useState(false);
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [userProfile, setUserProfile] = useState<any | null>(null);
+  const [isNewUser, setIsNewUser] = useState(false);
+  const [hasSeenVerification, setHasSeenVerification] = useState(false);
+  const [mentorProfile, setMentorProfile] = useState<any>({
+    name: '',
+    email: '',
+    photo: '',
+    about: '',
+    tagline: '',
+    specialisation: [],
+    pricePerLesson: 0,
+    location: '',
+    languages: [],
+    introVideoUrl: '',
+    teachingStyle: [],
+    experienceYears: 0,
+    studentsCount: 0,
+    rating: 5.0,
+    reviewCount: 0,
+    isVerified: false
+  });
+  const [lessons, setLessons] = useState<Lesson[]>([]);
   const [authView, setAuthView] = useState<AuthView>('splash');
   const [authError, setAuthError] = useState<string | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [realMentors, setRealMentors] = useState<MentorDetail[]>([]);
+  const [realStudents, setRealStudents] = useState<Student[]>([]);
+  const [realSessionLogs, setRealSessionLogs] = useState<SessionLog[]>([]);
+  const [sessionLessonNumber, setSessionLessonNumber] = useState(1);
+  const [sessionCovered, setSessionCovered] = useState('');
+  const [sessionFocus, setSessionFocus] = useState('');
+  const [mentorsLoading, setMentorsLoading] = useState(true);
+  const [studentsLoading, setStudentsLoading] = useState(true);
 
   // Firebase Auth Listener
   useEffect(() => {
+    let lessonsUnsubscribe: (() => void) | null = null;
+
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setCurrentUser(user);
@@ -1533,17 +1650,46 @@ export default function App() {
         getDoc(doc(db, 'users', user.uid)).then((docSnap) => {
           if (docSnap.exists()) {
             const userData = docSnap.data();
+            setUserProfile(userData);
             setIsStudent(userData.role === 'student');
+            
+            // Unsubscribe from previous lessons listener if any
+            if (lessonsUnsubscribe) {
+              lessonsUnsubscribe();
+              lessonsUnsubscribe = null;
+            }
+
+            // Check if user is "new" (no lessons/students)
+            const q = query(collection(db, 'lessons'), where(userData.role === 'student' ? 'studentId' : 'mentorId', '==', user.uid));
+            lessonsUnsubscribe = onSnapshot(q, (querySnapshot) => {
+              const lessonsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Lesson));
+              setLessons(lessonsData);
+              setIsNewUser(querySnapshot.empty);
+            }, (error) => {
+              // Only report error if user is still authenticated
+              if (auth.currentUser) {
+                handleFirestoreError(error, OperationType.GET, 'lessons');
+              }
+            });
+
             setView('home');
           } else {
             // New user, need to register
             setView('registration');
+            setIsNewUser(true);
           }
         });
       } else {
         setCurrentUser(null);
+        setUserProfile(null);
         setIsAuth(false);
         setView('auth');
+        
+        // Unsubscribe from lessons listener on logout
+        if (lessonsUnsubscribe) {
+          lessonsUnsubscribe();
+          lessonsUnsubscribe = null;
+        }
       }
     });
 
@@ -1553,14 +1699,75 @@ export default function App() {
         await getDocFromServer(doc(db, 'test', 'connection'));
       } catch (error) {
         if (error instanceof Error && error.message.includes('the client is offline')) {
-          console.error("Please check your Firebase configuration.");
+          console.error("Please check your Firebase configuration. ");
         }
       }
     };
     testConnection();
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (lessonsUnsubscribe) {
+        lessonsUnsubscribe();
+      }
+    };
   }, []);
+
+  useEffect(() => {
+    if (!isAuth) return;
+    const q = query(collection(db, 'mentors'));
+    const unsub = onSnapshot(q, (snap) => {
+      const data = snap.docs.map(d => ({ 
+        id: d.id, 
+        ...d.data() 
+      } as MentorDetail));
+      setRealMentors(data);
+      setMentorsLoading(false);
+    });
+    return () => unsub();
+  }, [isAuth]);
+
+  // Students Listener
+  useEffect(() => {
+    if (!isAuth || !currentUser) return;
+    
+    const q = query(collection(db, 'students'));
+    const unsub = onSnapshot(q, (snap) => {
+      const data = snap.docs.map(d => ({ 
+        id: d.id, 
+        ...d.data() 
+      } as Student));
+      setRealStudents(data);
+      setStudentsLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'students');
+    });
+    return () => unsub();
+  }, [isAuth, currentUser]);
+
+  // Session Logs Listener
+  useEffect(() => {
+    if (!isAuth || !currentUser) return;
+    
+    const q = query(
+      collection(db, 'sessionLogs'),
+      where(isStudent ? 'studentId' : 'mentorId', '==', currentUser.uid),
+      orderBy('date', 'desc')
+    );
+    
+    const unsub = onSnapshot(q, (snap) => {
+      const data = snap.docs.map(d => ({ 
+        id: d.id, 
+        ...d.data() 
+      } as SessionLog));
+      setRealSessionLogs(data);
+    }, (error) => {
+      // Collection might not exist yet, ignore index errors for now
+      console.warn("Session logs listener error:", error);
+    });
+    
+    return () => unsub();
+  }, [isAuth, isStudent, currentUser]);
 
   const handleGoogleLogin = async () => {
     setIsAuthLoading(true);
@@ -1633,15 +1840,62 @@ export default function App() {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
       
-      await setDoc(doc(db, 'users', user.uid), {
-        uid: user.uid,
-        name,
-        email,
-        phone,
-        role,
-        photo: user.photoURL || `https://picsum.photos/seed/${user.uid}/200`,
-        createdAt: new Date().toISOString()
-      });
+      if (role === 'mentor') {
+        await setDoc(doc(db, 'users', user.uid), {
+          uid: user.uid,
+          name,
+          email: user.email,
+          role: 'mentor',
+          createdAt: serverTimestamp()
+        });
+
+        await setDoc(doc(db, 'mentors', user.uid), {
+          uid: user.uid,
+          name,
+          email: user.email,
+          role: 'mentor',
+          tagline: '',
+          about: '',
+          photo: '',
+          coverPhoto: '',
+          introVideoUrl: '',
+          location: '',
+          address: '',
+          specialisation: [],
+          teachingStyle: [],
+          languages: [],
+          pricePerLesson: 0,
+          rating: 0,
+          reviewCount: 0,
+          studentsCount: 0,
+          experienceYears: 0,
+          isVerified: false,
+          packages: [],
+          credentials: [],
+          gallery: [],
+          createdAt: serverTimestamp()
+        });
+      } else {
+        await setDoc(doc(db, 'users', user.uid), {
+          uid: user.uid,
+          name,
+          email: user.email,
+          role: 'student',
+          createdAt: serverTimestamp()
+        });
+
+        await setDoc(doc(db, 'students', user.uid), {
+          uid: user.uid,
+          name,
+          email: user.email,
+          role: 'student',
+          instrument: '',
+          stage: 'Stage 1 — Foundation',
+          progress: 0,
+          photo: '',
+          createdAt: serverTimestamp()
+        });
+      }
       
       setIsStudent(role === 'student');
       setView('home');
@@ -1705,6 +1959,104 @@ export default function App() {
       console.error("Logout Error:", error);
     }
   };
+
+  const saveMentorProfile = async (updates: Partial<MentorDetail>) => {
+    if (!currentUser) return;
+    try {
+      await updateDoc(doc(db, 'mentors', currentUser.uid), {
+        ...updates,
+        updatedAt: serverTimestamp()
+      });
+    } catch (error) {
+      console.error('Profile save failed:', error);
+    }
+  };
+
+  const handleBookingConfirm = async (
+    type: 'trial' | 'package' | 'single'
+  ) => {
+    if (!currentUser || !selectedMentor) return;
+    
+    try {
+      await addDoc(collection(db, 'lessons'), {
+        studentId: currentUser.uid,
+        studentName: currentUser.displayName || 'Student',
+        mentorId: selectedMentor.id,
+        mentorName: selectedMentor.name,
+        instrument: selectedMentor.specialisation[0] || '',
+        date: bookingDate || '',
+        time: bookingTime || '',
+        type: type,
+        status: 'pending',
+        price: type === 'trial' ? 0 : 
+               type === 'single' ? 60 : 
+               selectedPackage?.price || 0,
+        studentNote: bookingNote || '',
+        lessonNumber: 1,
+        createdAt: serverTimestamp()
+      });
+
+      setBookingSuccess({ type, mentor: selectedMentor.name });
+      if (type === 'trial') setIsTrialCompleted(true);
+      
+    } catch (error) {
+      console.error('Booking failed:', error);
+    }
+  };
+
+  const handleSaveSession = async () => {
+    if (!selectedStudent || !selectedLesson || !currentUser) return;
+
+    try {
+      const logData = {
+        studentId: selectedStudent.id,
+        mentorId: currentUser.uid,
+        lessonNumber: selectedLesson.lessonNumber,
+        date: new Date().toISOString().split('T')[0],
+        covered: sessionCovered,
+        focus: sessionFocus,
+        milestones: selectedMilestones,
+        materials: [], // TODO: handle materials
+        rating: sessionRating,
+        mood: studentMood,
+        createdAt: serverTimestamp()
+      };
+
+      await addDoc(collection(db, 'sessionLogs'), logData);
+
+      // Update lesson status to completed
+      await updateDoc(doc(db, 'lessons', selectedLesson.id), {
+        status: 'completed'
+      });
+
+      // Trigger notifications
+      await triggerNotification(
+        'session_logged', 
+        'Session Logged', 
+        `${userProfile?.name || 'Mentor'} has added notes from your Lesson ${selectedLesson.lessonNumber}`
+      );
+
+      if (selectedMilestones.length > 0) {
+        await triggerNotification(
+          'milestone_completed', 
+          'Milestone Completed', 
+          `You've reached a new milestone in your ${selectedStudent.instrument} journey!`
+        );
+      }
+
+      // Reset states and go home
+      setSessionCovered('');
+      setSessionFocus('');
+      setSelectedMilestones([]);
+      setSessionRating(0);
+      setStudentMood(null);
+      setView('home');
+
+    } catch (error) {
+      console.error("Error saving session log:", error);
+      handleFirestoreError(error, OperationType.CREATE, 'sessionLogs');
+    }
+  };
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotificationSheet, setShowNotificationSheet] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -1739,6 +2091,55 @@ export default function App() {
     return () => unsubscribe();
   }, [currentUser]);
 
+  useEffect(() => {
+    if (!currentUser || isStudent) return;
+    const unsub = onSnapshot(
+      doc(db, 'mentors', currentUser.uid), 
+      (snap) => {
+        if (snap.exists()) {
+          setMentorProfile(prev => ({
+            ...prev,
+            ...snap.data()
+          }));
+        }
+      }
+    );
+    return () => unsub();
+  }, [currentUser, isStudent]);
+
+  useEffect(() => {
+    if (!currentUser || isStudent) return;
+    
+    const q = query(
+      collection(db, 'lessons'),
+      where('mentorId', '==', currentUser.uid),
+      where('status', '==', 'completed')
+    );
+    
+    const unsub = onSnapshot(q, (snap) => {
+      const lessons = snap.docs.map(d => d.data());
+      const total = lessons.reduce((sum, l) => 
+        sum + (l.price || 0), 0);
+      const platformFee = total * 0.1;
+      setRealBalance(total - platformFee);
+      setRealTransactions(
+        snap.docs.map(d => ({
+          id: d.id,
+          studentName: d.data().studentName,
+          date: d.data().date,
+          grossAmount: d.data().price,
+          platformFee: d.data().price * 0.1,
+          netAmount: d.data().price * 0.9,
+          lessonType: d.data().type,
+          studentPhoto: '',
+          studentId: d.data().studentId
+        }))
+      );
+    });
+    
+    return () => unsub();
+  }, [currentUser, isStudent]);
+
   const triggerNotification = async (type: string, title: string, body: string) => {
     if (!notificationsEnabled || !currentUser) return;
     
@@ -1757,8 +2158,7 @@ export default function App() {
   };
   const [userRole, setUserRole] = useState<'student' | 'mentor' | null>(null);
   const [splashIndex, setSplashIndex] = useState(0);
-  const [isStudent, setIsStudent] = useState(false);
-  const [profileProgress, setProfileProgress] = useState(45);
+  const profileProgress = calculateProfileProgress(mentorProfile);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
   const [homeTab, setHomeTab] = useState<'today' | 'pending'>('today');
@@ -1766,8 +2166,8 @@ export default function App() {
   const [activeLessonAction, setActiveLessonAction] = useState<Lesson | null>(null);
   const [walletTab, setWalletTab] = useState<'transactions' | 'withdrawals'>('transactions');
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>(MOCK_WITHDRAWALS);
-  const [transactions, setTransactions] = useState<Transaction[]>(MOCK_TRANSACTIONS);
-  const [balance, setBalance] = useState(2450);
+  const [realTransactions, setRealTransactions] = useState<Transaction[]>([]);
+  const [realBalance, setRealBalance] = useState(0);
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [transactionFilter, setTransactionFilter] = useState<'week' | 'month' | 'custom'>('month');
@@ -1775,12 +2175,6 @@ export default function App() {
   const [isWithdrawing, setIsWithdrawing] = useState<'idle' | 'processing' | 'success'>('idle');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [showSetupDetails, setShowSetupDetails] = useState(false);
-  const [mentorProfile, setMentorProfile] = useState({
-    name: 'Dr. Julian Vane',
-    email: 'julian.vane@mentor.com',
-    phone: '+60 12 345 6789',
-    location: 'Kuala Lumpur, Malaysia'
-  });
 
   // Bottom Sheet States
   const [showScheduleSheet, setShowScheduleSheet] = useState(false);
@@ -1820,7 +2214,18 @@ export default function App() {
   const [preferredTheme, setPreferredTheme] = useState<'light' | 'dark' | null>(null);
 
   // Student States
-  const [studentView, setStudentView] = useState<StudentView>('home');
+  const [studentViewStack, setStudentViewStack] = useState<StudentView[]>(['home']);
+  const studentView = studentViewStack[studentViewStack.length - 1];
+
+  const pushStudentView = (view: StudentView) => {
+    setStudentViewStack(prev => [...prev, view]);
+  };
+  const switchStudentTab = (tab: StudentView) => {
+    setStudentViewStack([tab]);
+  };
+  const popStudentView = () => {
+    setStudentViewStack(prev => prev.length > 1 ? prev.slice(0, -1) : prev);
+  };
   const [selectedInstrument, setSelectedInstrument] = useState<Instrument | null>(null);
   const [selectedMentor, setSelectedMentor] = useState<MentorDetail | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -1855,7 +2260,6 @@ export default function App() {
   const [paymentStep, setPaymentStep] = useState<'method' | 'processing' | 'success'>('method');
 
   // Mentor Profile View States
-  const [expandedSection, setExpandedSection] = useState<'path' | 'packages' | 'schedule' | 'gallery' | 'reviews' | 'credentials' | null>(null);
   const [showTrialRules, setShowTrialRules] = useState(false);
 
   // Student Journey View States
@@ -1917,8 +2321,10 @@ export default function App() {
         <div className="relative z-10">
           <div className="flex justify-between items-center mb-4">
             <div>
-              <h1 className={`text-2xl font-serif-sturdy mb-0.5 ${dark ? 'text-white' : 'text-zinc-900'}`}>Explore</h1>
-              <p className={`text-[9px] font-mono uppercase tracking-[0.3em] ${dark ? 'text-white/40' : 'text-zinc-500'}`}>Heritage Instruments</p>
+              <h2 className={`text-[9px] font-mono uppercase tracking-widest ${dark ? 'text-white/40' : 'text-zinc-500'}`}>Welcome,</h2>
+              <h1 className={`text-2xl font-serif-sturdy mb-0.5 ${dark ? 'text-white' : 'text-zinc-900'}`}>
+                {userProfile?.name?.split(' ')[0] || 'Student'}
+              </h1>
             </div>
             <div className="flex gap-2">
               <button 
@@ -1934,9 +2340,59 @@ export default function App() {
             </div>
           </div>
 
+          {/* New Student Onboarding */}
+          {isNewUser && isStudent && (
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-8 space-y-6"
+            >
+              <div className={`p-6 rounded-[2rem] border ${dark ? 'bg-white/5 border-white/10' : 'bg-zinc-50 border-zinc-200'}`}>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 rounded-full bg-harbour-500/20 flex items-center justify-center text-harbour-500">
+                    <Music size={20} />
+                  </div>
+                  <div>
+                    <h3 className={`text-sm font-bold ${dark ? 'text-white' : 'text-zinc-900'}`}>No mentor yet</h3>
+                    <p className={`text-[10px] ${dark ? 'text-white/40' : 'text-zinc-500'}`}>Find your perfect guide</p>
+                  </div>
+                </div>
+                
+                <div className="mb-6">
+                  <h4 className={`text-[9px] uppercase tracking-widest font-bold mb-3 ${dark ? 'text-white/30' : 'text-zinc-400'}`}>Suggested Mentors</h4>
+                  <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
+                    {realMentors.filter(m => calculateProfileProgress(m) === 100).slice(0, 3).map(mentor => (
+                      <div 
+                        key={mentor.id}
+                        onClick={() => { setSelectedMentor(mentor); pushStudentView('mentor-profile'); }}
+                        className={`flex-shrink-0 w-32 p-3 rounded-2xl border transition-all ${dark ? 'bg-white/5 border-white/10' : 'bg-white border-zinc-200 shadow-sm'}`}
+                      >
+                        <img src={mentor.photo} className="w-full aspect-square rounded-xl object-cover mb-2" referrerPolicy="no-referrer" />
+                        <p className={`text-[10px] font-bold truncate ${dark ? 'text-white' : 'text-zinc-900'}`}>{mentor.name}</p>
+                        <p className={`text-[8px] ${dark ? 'text-white/40' : 'text-zinc-500'}`}>{mentor.specialisation[0]}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className={`p-4 rounded-2xl border ${dark ? 'bg-harbour-500/10 border-harbour-500/20' : 'bg-harbour-50 border-harbour-100'}`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Bot size={14} className="text-harbour-500" />
+                    <span className={`text-[9px] font-bold uppercase tracking-widest ${dark ? 'text-harbour-400' : 'text-harbour-600'}`}>AI Buddy Tips</span>
+                  </div>
+                  <p className={`text-[10px] leading-relaxed ${dark ? 'text-white/70' : 'text-zinc-600'}`}>
+                    "Try exploring instruments by culture! Each has a unique story and soul. Start with the Sape if you love strings."
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
           <div className="mb-5">
             <div className="flex justify-between items-end mb-2">
-              <h2 className={`text-[9px] uppercase tracking-[0.2em] font-bold ${dark ? 'text-white/30' : 'text-zinc-500'}`}>Explore Genres</h2>
+              <h2 className={`text-[9px] uppercase tracking-[0.2em] font-bold ${dark ? 'text-white/30' : 'text-zinc-500'}`}>
+                {isNewUser ? 'Explore Instruments' : 'Continue Learning'}
+              </h2>
             </div>
             <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
               {(['Malay', 'Indian', 'Chinese', 'Borneo'] as const).map((tab) => (
@@ -1958,7 +2414,7 @@ export default function App() {
                 whileHover={{ y: -2 }}
                 whileTap={{ scale: 0.99 }}
                 transition={{ type: 'tween', duration: 0.1 }}
-                onClick={() => { setSelectedInstrument(instrument); setStudentView('mentor-listing'); }}
+                onClick={() => { setSelectedInstrument(instrument); pushStudentView('mentor-listing'); }}
                 className="group relative aspect-[2.4/1] rounded-[2rem] overflow-hidden cursor-pointer shadow-lg"
               >
                 <img 
@@ -1991,10 +2447,27 @@ export default function App() {
 
   const MentorListingView = () => {
     const dark = true;
+
+    if (mentorsLoading) return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-white/40 text-sm animate-pulse">
+          Loading mentors...
+        </p>
+      </div>
+    );
+
+    if (!mentorsLoading && realMentors.length === 0) return (
+      <div className="flex flex-col items-center justify-center h-64 gap-3">
+        <Music2 size={32} className="text-white/20" />
+        <p className="text-white/40 text-sm">No mentors yet</p>
+        <p className="text-white/20 text-xs">Check back soon</p>
+      </div>
+    );
+
     return (
       <div className="px-5 pt-12">
         <div className="flex items-center gap-4 mb-8">
-          <button onClick={() => setStudentView('home')} className={`w-10 h-10 rounded-full flex items-center justify-center border ${dark ? 'bg-white/5 border-white/10 text-white' : 'bg-black/5 border-black/5 text-zinc-900'}`}>
+          <button onClick={() => popStudentView()} className={`w-10 h-10 rounded-full flex items-center justify-center border ${dark ? 'bg-white/5 border-white/10 text-white' : 'bg-black/5 border-black/5 text-zinc-900'}`}>
             <ChevronLeft size={20} />
           </button>
           <div>
@@ -2004,12 +2477,15 @@ export default function App() {
         </div>
 
         <div className="space-y-4">
-          {MOCK_MENTORS.filter(m => m.specialisation.includes(selectedInstrument?.name || '')).map((mentor) => (
+          {realMentors.filter(m => {
+            const progress = calculateProfileProgress(m);
+            return progress === 100 && m.specialisation.includes(selectedInstrument?.name || '');
+          }).map((mentor) => (
             <motion.div
               key={mentor.id}
               whileTap={{ scale: 0.98 }}
               transition={{ type: 'tween', duration: 0.1 }}
-              onClick={() => { setSelectedMentor(mentor); setStudentView('mentor-profile'); }}
+              onClick={() => { setSelectedMentor(mentor); pushStudentView('mentor-profile'); }}
               className={`border rounded-[2rem] p-5 relative overflow-hidden group transition-colors ${dark ? 'bg-white/5 border-white/10' : 'bg-white border-zinc-100 shadow-sm'}`}
             >
               <div className="flex gap-4">
@@ -2064,7 +2540,7 @@ export default function App() {
     return (
       <div className={`min-h-full px-5 pt-12 ${dark ? 'bg-black text-white' : 'bg-white text-zinc-900'}`}>
         <header className="flex items-center gap-4 mb-8">
-          <button onClick={() => setStudentView('mentor-profile')} className={`w-10 h-10 rounded-full border flex items-center justify-center ${dark ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
+          <button onClick={() => popStudentView()} className={`w-10 h-10 rounded-full border flex items-center justify-center ${dark ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
             <ChevronLeft size={20} />
           </button>
           <div>
@@ -2144,7 +2620,7 @@ export default function App() {
             <h2 className="text-2xl font-serif-sturdy mb-2">Booking Confirmed!</h2>
             <p className={`text-sm mb-8 ${dark ? 'text-white/60' : 'text-zinc-600'}`}>Your free trial with {selectedMentor.name} is scheduled for March {selectedDate} at {selectedTime}.</p>
             <button 
-              onClick={() => setStudentView('journey')}
+              onClick={() => switchStudentTab('journey')}
               className={`w-full py-5 rounded-full font-bold ${dark ? 'bg-white text-black' : 'bg-zinc-900 text-white'}`}
             >
               View My Journey
@@ -2161,7 +2637,7 @@ export default function App() {
     return (
       <div className={`min-h-full px-5 pt-12 ${dark ? 'bg-black text-white' : 'bg-white text-zinc-900'}`}>
         <header className="flex items-center gap-4 mb-8">
-          <button onClick={() => setStudentView('mentor-profile')} className={`w-10 h-10 rounded-full border flex items-center justify-center ${dark ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
+          <button onClick={() => popStudentView()} className={`w-10 h-10 rounded-full border flex items-center justify-center ${dark ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
             <ChevronLeft size={20} />
           </button>
           <div>
@@ -2197,7 +2673,7 @@ export default function App() {
     return (
       <div className={`min-h-full px-5 pt-12 ${dark ? 'bg-black text-white' : 'bg-white text-zinc-900'}`}>
         <header className="flex items-center gap-4 mb-8">
-          <button onClick={() => setStudentView('mentor-profile')} className={`w-10 h-10 rounded-full border flex items-center justify-center ${dark ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
+          <button onClick={() => popStudentView()} className={`w-10 h-10 rounded-full border flex items-center justify-center ${dark ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
             <ChevronLeft size={20} />
           </button>
           <div>
@@ -2262,7 +2738,7 @@ export default function App() {
             <h2 className="text-2xl font-serif-sturdy mb-2">Payment Successful!</h2>
             <p className={`text-sm mb-8 ${dark ? 'text-white/60' : 'text-zinc-600'}`}>Your package has been activated. You can now start scheduling your lessons with {selectedMentor.name}.</p>
             <button 
-              onClick={() => setStudentView('journey')}
+              onClick={() => switchStudentTab('journey')}
               className={`w-full py-5 rounded-full font-bold ${dark ? 'bg-white text-black' : 'bg-zinc-900 text-white'}`}
             >
               Go to My Journey
@@ -2335,7 +2811,7 @@ export default function App() {
             ].map((item) => (
               <button
                 key={item.id}
-                onClick={() => setStudentView(item.id as StudentView)}
+                onClick={() => switchStudentTab(item.id as StudentView)}
                 className={`relative flex-1 flex flex-col items-center gap-1 py-2 rounded-2xl transition-all duration-300 ${
                   studentView === item.id 
                     ? 'text-white' 
@@ -2362,17 +2838,52 @@ export default function App() {
   };
   const MentorProfileView = () => {
     const dark = true;
+    const [localExpandedSection, setLocalExpandedSection] = useState<string | null>(null);
 
     if (!selectedMentor) return null;
+
+    const mentorInstrument = MOCK_INSTRUMENTS.find(i => 
+      selectedMentor.specialisation.some(s => 
+        s.toLowerCase().includes(i.name.toLowerCase())
+      )
+    );
+    const coverImage = mentorInstrument?.photo || selectedMentor.photo;
 
     return (
       <div className={`${dark ? 'bg-black text-white' : 'bg-white text-zinc-900'} min-h-full`}>
         <div className="relative h-64 overflow-hidden">
-          <img src={selectedMentor.photo} className="w-full h-full object-cover opacity-60" referrerPolicy="no-referrer" />
+          {selectedMentor.introVideoUrl ? (
+            <video
+              src={selectedMentor.introVideoUrl}
+              className="w-full h-full object-cover opacity-70"
+              autoPlay
+              muted
+              loop
+              playsInline
+              poster={coverImage}
+            />
+          ) : (
+            <img 
+              src={coverImage}
+              className="w-full h-full object-cover opacity-60" 
+              referrerPolicy="no-referrer" 
+            />
+          )}
           <div className={`absolute inset-0 bg-gradient-to-t ${dark ? 'from-black' : 'from-white'} via-transparent to-transparent`} />
-          <button onClick={() => setStudentView('mentor-listing')} className={`absolute top-12 left-5 w-10 h-10 backdrop-blur-md rounded-full flex items-center justify-center border ${dark ? 'bg-black/40 border-white/10 text-white' : 'bg-white/40 border-black/10 text-zinc-900'}`}>
+          <button onClick={() => popStudentView()} className={`absolute top-12 left-5 w-10 h-10 backdrop-blur-md rounded-full flex items-center justify-center border ${dark ? 'bg-black/40 border-white/10 text-white' : 'bg-white/40 border-black/10 text-zinc-900'}`}>
             <ChevronLeft size={20} />
           </button>
+          {selectedMentor.introVideoUrl && (
+            <button 
+              onClick={() => {
+                const vid = document.querySelector('video') as HTMLVideoElement;
+                if (vid) vid.muted = !vid.muted;
+              }}
+              className="absolute top-12 right-5 w-10 h-10 backdrop-blur-md bg-black/40 border border-white/10 rounded-full flex items-center justify-center text-white z-10"
+            >
+              <Volume2 size={16} />
+            </button>
+          )}
           <div className="absolute bottom-6 left-5 flex items-end gap-4">
             <div className="relative">
               <img src={selectedMentor.photo} className={`w-24 h-24 rounded-[2rem] object-cover border-4 shadow-2xl ${dark ? 'border-black' : 'border-white'}`} referrerPolicy="no-referrer" />
@@ -2409,7 +2920,7 @@ export default function App() {
           <button 
             onClick={() => {
               setSelectedChat(selectedMentor);
-              setStudentView('messages');
+              pushStudentView('messages');
             }}
             className={`w-full py-4 border rounded-2xl flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest ${dark ? 'bg-white/5 border-white/10 text-white' : 'bg-black/5 border-black/5 text-zinc-900'}`}
           >
@@ -2446,13 +2957,19 @@ export default function App() {
               { id: 'reviews', label: 'Student Reviews', icon: Star },
               { id: 'credentials', label: 'Credentials', icon: Award }
             ].map((section) => (
-              <div key={section.id} className={`border-b pb-4 ${dark ? 'border-white/10' : 'border-black/5'}`}>
+              <div key={section.id} id={`section-${section.id}`} className={`border-b pb-4 ${dark ? 'border-white/10' : 'border-black/5'}`}>
                 <button 
-                  onClick={() => {
+                  onClick={(e) => {
                     if (section.id === 'schedule') {
                       setShowScheduleSheet(true);
                     } else {
-                      setExpandedSection(expandedSection === section.id ? null : section.id as any);
+                      const isExpanding = localExpandedSection !== section.id;
+                      setLocalExpandedSection(isExpanding ? section.id : null);
+                      if (isExpanding) {
+                        setTimeout(() => {
+                          document.getElementById(`section-${section.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }, 100);
+                      }
                     }
                   }}
                   className="w-full flex items-center justify-between py-2"
@@ -2461,12 +2978,12 @@ export default function App() {
                     <section.icon size={18} className={dark ? 'text-white/40' : 'text-zinc-400'} />
                     <span className={`text-sm font-bold ${dark ? 'text-white' : 'text-zinc-900'}`}>{section.label}</span>
                   </div>
-                  <motion.div animate={{ rotate: expandedSection === section.id ? 180 : 0 }}>
+                  <motion.div animate={{ rotate: localExpandedSection === section.id ? 180 : 0 }}>
                     <ChevronRight size={16} className={dark ? 'text-white/20' : 'text-zinc-300'} />
                   </motion.div>
                 </button>
                 <AnimatePresence>
-                  {expandedSection === section.id && (
+                  {localExpandedSection === section.id && (
                     <motion.div
                       initial={{ height: 0, opacity: 0 }}
                       animate={{ height: 'auto', opacity: 1 }}
@@ -2585,9 +3102,12 @@ export default function App() {
   const StudentJourneyView = ({ forcedDark }: { forcedDark?: boolean }) => {
     const dark = forcedDark ?? isDark;
     
-    // For demo purposes, we'll use Sarah Jenkins as the current student
-    const currentStudent = MOCK_STUDENTS[0];
+    // Use the dynamic user profile
+    const currentStudent = userProfile || MOCK_STUDENTS[0];
     const mentor = MOCK_MENTORS[0]; // Cikgu Aris
+
+    const upcomingLesson = lessons.find(l => l.status === 'confirmed' && new Date(l.date) >= new Date());
+    const pastLessonsData = lessons.filter(l => l.status === 'confirmed' && new Date(l.date) < new Date());
 
     const instruments = [
       { id: 'gambus', name: 'Gambus', icon: Music2 },
@@ -2604,7 +3124,7 @@ export default function App() {
     };
 
     // Filter logs for the current student and instrument
-    const studentLogs = MOCK_SESSION_LOGS.filter(log => log.studentId === currentStudent.id);
+    const studentLogs = realSessionLogs.filter(log => log.studentId === currentStudent.id);
     
     // Map logs to a more detailed format for the UI
     const pastLessons = studentLogs.map((log, index) => ({
@@ -3064,8 +3584,8 @@ export default function App() {
   const StudentMessagesView = ({ forcedDark }: { forcedDark?: boolean }) => {
     const dark = forcedDark ?? isDark;
     
-    // Use a subset of mentors for messages
-    const messageMentors = MOCK_MENTORS.slice(0, 3);
+    // Use real mentors for messages
+    const messageMentors = realMentors.slice(0, 3);
     const lastMessages = [
       "Looking forward to our session on Friday!",
       "Did you manage to practice the new rhythm?",
@@ -3087,45 +3607,57 @@ export default function App() {
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 space-y-3">
-          {messageMentors.map((mentor, i) => (
-            <div 
-              key={mentor.id} 
-              onClick={() => setSelectedChat(mentor)}
-              className={`p-4 rounded-3xl border transition-all cursor-pointer ${dark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-100 shadow-sm hover:border-zinc-200'}`}
-            >
-              <div className="flex items-center gap-4">
-                <div className="relative">
-                  <img src={mentor.photo} className="w-12 h-12 rounded-2xl object-cover" referrerPolicy="no-referrer" />
-                  {i === 0 && <div className={`absolute -top-1 -right-1 w-3.5 h-3.5 bg-harbour-500 rounded-full border-2 ${dark ? 'border-black' : 'border-white'}`} />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-start mb-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-bold truncate">{mentor.name}</h3>
-                      <span className="px-1.5 py-0.5 bg-harbour-500/10 text-harbour-400 text-[7px] font-bold rounded uppercase tracking-widest">Mentor</span>
-                    </div>
-                    <span className={`text-[8px] font-mono ${dark ? 'text-white/30' : 'text-zinc-400'}`}>10:45 AM</span>
+          {messageMentors.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full gap-2 opacity-30">
+              <MessageSquare size={40} />
+              <p className="text-xs font-bold uppercase tracking-widest">No conversations yet</p>
+            </div>
+          ) : (
+            messageMentors.map((mentor, i) => (
+              <div 
+                key={mentor.id} 
+                onClick={() => setSelectedChat(mentor)}
+                className={`p-4 rounded-3xl border transition-all cursor-pointer ${dark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-100 shadow-sm hover:border-zinc-200'}`}
+              >
+                <div className="flex items-center gap-4">
+                  <div className="relative">
+                    <img src={mentor.photo} className="w-12 h-12 rounded-2xl object-cover" referrerPolicy="no-referrer" />
+                    {i === 0 && <div className={`absolute -top-1 -right-1 w-3.5 h-3.5 bg-harbour-500 rounded-full border-2 ${dark ? 'border-black' : 'border-white'}`} />}
                   </div>
-                  <p className="text-[9px] text-harbour-400 uppercase tracking-widest mb-1">{mentor.specialisation[0]}</p>
-                  <p className={`text-[11px] truncate ${dark ? 'text-white/40' : 'text-zinc-500'}`}>{lastMessages[i]}</p>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex justify-between items-start mb-1">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-bold truncate">{mentor.name}</h3>
+                        <span className="px-1.5 py-0.5 bg-harbour-500/10 text-harbour-400 text-[7px] font-bold rounded uppercase tracking-widest">Mentor</span>
+                      </div>
+                      <span className={`text-[8px] font-mono ${dark ? 'text-white/30' : 'text-zinc-400'}`}>10:45 AM</span>
+                    </div>
+                    <p className="text-[9px] text-harbour-400 uppercase tracking-widest mb-1">{mentor.specialisation[0]}</p>
+                    <p className={`text-[11px] truncate ${dark ? 'text-white/40' : 'text-zinc-500'}`}>{lastMessages[i]}</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            )))}
         </div>
       </div>
     );
   };
 
   const StudentProfileView = () => {
-    // Use the first mock student as the "current user" for this demo
-    const currentUser = MOCK_STUDENTS[0];
+    // Use the dynamic user profile
+    const profile = userProfile || {
+      name: 'New Student',
+      email: currentUser?.email || 'student@example.com',
+      instrument: 'Sape',
+      stage: 'Beginner',
+      photo: "https://picsum.photos/seed/student/400"
+    };
 
     // Filter transactions for this student
-    const studentTransactions = MOCK_TRANSACTIONS.filter(t => t.studentId === currentUser.id);
+    const studentTransactions = MOCK_TRANSACTIONS.filter(t => t.studentId === currentUser?.uid);
 
     const learningInstruments = [
-      { name: currentUser.instrument, icon: Music, level: currentUser.stage },
+      { name: profile.instrument, icon: Music, level: profile.stage },
     ];
 
     return (
@@ -3138,9 +3670,10 @@ export default function App() {
             <div className="relative mb-6">
               <div className="w-24 h-24 rounded-[2rem] overflow-hidden border-4 border-white/10 shadow-2xl">
                 <img 
-                  src="https://picsum.photos/seed/student/400" 
+                  src={profile.photo || "https://picsum.photos/seed/student/400"} 
                   className="w-full h-full object-cover" 
                   referrerPolicy="no-referrer" 
+                  alt="Profile"
                 />
               </div>
               <button className="absolute -bottom-1 -right-1 w-8 h-8 bg-white text-zinc-900 rounded-xl flex items-center justify-center shadow-xl">
@@ -3149,8 +3682,8 @@ export default function App() {
             </div>
 
             <div className="space-y-1">
-              <h1 className="text-2xl font-serif-sturdy tracking-tight">{currentUser.name}</h1>
-              <p className="text-[10px] text-white/40 font-medium tracking-widest uppercase">{currentUser.email}</p>
+              <h1 className="text-2xl font-serif-sturdy tracking-tight">{profile.name}</h1>
+              <p className="text-[10px] text-white/40 font-medium tracking-widest uppercase">{profile.email}</p>
             </div>
           </div>
         </header>
@@ -3587,7 +4120,7 @@ export default function App() {
       </div>
     );
 
-    const AuthError = ({ message }: { message: string | null }) => (
+    const AuthError = ({ message }: { message: string | null | undefined }) => (
       <AnimatePresence>
         {message && (
           <motion.div 
@@ -3808,7 +4341,7 @@ export default function App() {
 
           {!forgotPasswordSent ? (
             <form className="space-y-6" onSubmit={handleForgotPassword}>
-              <AuthError />
+              <AuthError message={authError} />
               <div className="space-y-2">
                 <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-400">Email Address</label>
                 <input name="email" type="email" className={`w-full border rounded-2xl px-6 py-4 focus:outline-none ${isDark ? 'bg-white/5 border-white/10 focus:border-harbour-500' : 'bg-white border-zinc-200 focus:border-harbour-500'}`} placeholder="julian@example.com" required />
@@ -3902,11 +4435,13 @@ export default function App() {
 
   const HomeView = () => (
     <div className="px-5 pt-12">
-      {/* Header - More Compact */}
+      {/* Header - Dynamic Name */}
       <div className="flex justify-between items-center mb-4">
         <div>
           <h2 className={`text-[9px] font-mono uppercase tracking-widest ${isDark ? 'opacity-40' : 'text-zinc-500'}`}>Welcome,</h2>
-          <h1 className={`text-xl font-serif-curvy italic ${isDark ? 'text-white' : 'text-zinc-900'}`}>Dr. Julian</h1>
+          <h1 className={`text-xl font-serif-curvy italic ${isDark ? 'text-white' : 'text-zinc-900'}`}>
+            {userProfile?.name?.split(' ')[0] || 'Mentor'}
+          </h1>
         </div>
         <div className="flex gap-2">
           <ThemeToggle />
@@ -3919,12 +4454,109 @@ export default function App() {
               <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-harbour-500 rounded-full border border-black" />
             )}
           </button>
-          <img src="https://picsum.photos/seed/mentor/100" className={`w-8 h-8 rounded-full object-cover border ${isDark ? 'border-white/20' : 'border-black/10'}`} referrerPolicy="no-referrer" />
+          <img 
+            src={userProfile?.photo || "https://picsum.photos/seed/mentor/100"} 
+            className={`w-8 h-8 rounded-full object-cover border ${isDark ? 'border-white/20' : 'border-black/10'}`} 
+            referrerPolicy="no-referrer" 
+            alt="Profile"
+          />
         </div>
       </div>
 
+      {/* New Mentor Onboarding */}
+      {isNewUser && !isStudent && (
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-8 space-y-4"
+        >
+          <div className={`p-6 rounded-[2rem] border ${isDark ? 'bg-white/5 border-white/10' : 'bg-zinc-50 border-zinc-200'}`}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-harbour-500/20 flex items-center justify-center text-harbour-500">
+                <Users size={20} />
+              </div>
+              <div>
+                <h3 className={`text-sm font-bold ${isDark ? 'text-white' : 'text-zinc-900'}`}>No students yet</h3>
+                <p className={`text-[10px] ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>Start your teaching journey today</p>
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <button 
+                onClick={() => setView('profile')}
+                className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-200 hover:border-zinc-300'}`}
+              >
+                <div className="flex items-center gap-3">
+                  <User size={14} className="text-harbour-500" />
+                  <span className={`text-[10px] font-bold ${isDark ? 'text-white/80' : 'text-zinc-700'}`}>Complete Profile</span>
+                </div>
+                <ChevronRight size={14} className="text-white/20" />
+              </button>
+              
+              <button 
+                onClick={() => setShowScheduleSheet(true)}
+                className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-200 hover:border-zinc-300'}`}
+              >
+                <div className="flex items-center gap-3">
+                  <Calendar size={14} className="text-harbour-500" />
+                  <span className={`text-[10px] font-bold ${isDark ? 'text-white/80' : 'text-zinc-700'}`}>Add Availability</span>
+                </div>
+                <ChevronRight size={14} className="text-white/20" />
+              </button>
+
+              <button 
+                className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-200 hover:border-zinc-300'}`}
+              >
+                <div className="flex items-center gap-3">
+                  <Upload size={14} className="text-harbour-500" />
+                  <span className={`text-[10px] font-bold ${isDark ? 'text-white/80' : 'text-zinc-700'}`}>Upload First Resource</span>
+                </div>
+                <ChevronRight size={14} className="text-white/20" />
+              </button>
+
+              <button 
+                onClick={() => {
+                  const mockMentor: MentorDetail = {
+                    id: currentUser?.uid || 'new',
+                    name: userProfile?.name || 'New Mentor',
+                    tagline: userProfile?.tagline || 'Traditional Music Expert',
+                    photo: userProfile?.photo || "https://picsum.photos/seed/mentor/400",
+                    rating: 5.0,
+                    reviewCount: 0,
+                    location: userProfile?.location || 'Malaysia',
+                    address: userProfile?.address || 'Kuala Lumpur',
+                    pricePerLesson: 60,
+                    studentsCount: 0,
+                    experienceYears: 10,
+                    about: userProfile?.about || 'Professional traditional music instructor.',
+                    specialisation: Array.isArray(userProfile?.specialisation) ? userProfile.specialisation : (userProfile?.specialisation ? [userProfile.specialisation] : ['Sape', 'Gambus']),
+                    teachingStyle: ['Traditional', 'Modern'],
+                    languages: ['Malay', 'English'],
+                    isVerified: false,
+                    packages: [],
+                    reviews: [],
+                    credentials: [],
+                    gallery: []
+                  };
+                  setSelectedMentor(mockMentor);
+                  pushStudentView('mentor-profile');
+                  setIsStudent(true); // Temporarily switch to student mode to preview
+                }}
+                className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-200 hover:border-zinc-300'}`}
+              >
+                <div className="flex items-center gap-3">
+                  <Eye size={14} className="text-harbour-500" />
+                  <span className={`text-[10px] font-bold ${isDark ? 'text-white/80' : 'text-zinc-700'}`}>Preview Profile</span>
+                </div>
+                <ChevronRight size={14} className="text-white/20" />
+              </button>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
       {/* Profile Progress - Smaller */}
-      {profileProgress < 100 && (
+      {profileProgress < 100 && !isNewUser && (
         <motion.div 
           initial={{ y: -10, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
@@ -3932,233 +4564,276 @@ export default function App() {
         >
           <div className="flex-1">
             <div className="flex justify-between mb-1">
-              <span className="text-[8px] font-mono uppercase tracking-widest font-bold">Profile {profileProgress}%</span>
+              <span className="text-[8px] font-bold uppercase tracking-widest text-white/40">Profile Progress</span>
+              <span className="text-[8px] font-bold text-white/60">{profileProgress}%</span>
             </div>
-            <ProgressBar progress={profileProgress} className="bg-white/5 h-1" />
+            <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+              <motion.div 
+                initial={{ width: 0 }}
+                animate={{ width: `${profileProgress}%` }}
+                className="h-full bg-harbour-500 rounded-full shadow-[0_0_10px_rgba(20,184,166,0.5)]"
+              />
+            </div>
           </div>
-          <button onClick={() => setView('profile')} className="p-1.5 bg-white text-black rounded-full">
-            <Plus size={12} />
+          <button 
+            onClick={() => setView('profile')}
+            className="w-8 h-8 bg-white/10 rounded-xl flex items-center justify-center text-white/60 hover:bg-white/20 transition-colors"
+          >
+            <ChevronRight size={14} />
           </button>
         </motion.div>
       )}
 
-
-
       {/* Tabs Toggle */}
-      <div className={`flex gap-1 mb-6 p-1 rounded-full ${isDark ? 'bg-white/5' : 'bg-zinc-100'}`}>
-        <button 
-          onClick={() => setHomeTab('today')}
-          className={`flex-1 py-2 rounded-full text-[9px] font-bold transition-all ${homeTab === 'today' ? (isDark ? 'bg-white text-black' : 'bg-white text-zinc-900 shadow-sm') : (isDark ? 'text-white/40' : 'text-zinc-400')}`}
-        >
-          Today
-        </button>
-        <button 
-          onClick={() => setHomeTab('pending')}
-          className={`flex-1 py-2 rounded-full text-[9px] font-bold transition-all ${homeTab === 'pending' ? (isDark ? 'bg-white text-black' : 'bg-white text-zinc-900 shadow-sm') : (isDark ? 'text-white/40' : 'text-zinc-400')}`}
-        >
-          Pending
-        </button>
-      </div>
-
-      {homeTab === 'pending' ? (
-        <section className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className={`text-[9px] uppercase tracking-widest font-bold flex items-center gap-2 ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>
-              Requests <span className="w-1 h-1 bg-red-500 rounded-full animate-pulse" />
-            </h2>
-            <span className={`text-[8px] font-mono ${isDark ? 'text-white/20' : 'text-zinc-400'}`}>
-              {MOCK_LESSONS.filter(l => l.status === 'pending').length} New
-            </span>
-          </div>
-          <div className="space-y-3">
-            {MOCK_LESSONS.filter(l => l.status === 'pending').map(request => {
-              const student = MOCK_STUDENTS.find(s => s.id === request.studentId);
-              return (
-                <div key={request.id} className={`border p-4 rounded-2xl transition-all hover:shadow-lg ${isDark ? 'bg-white/5 border-white/10 hover:bg-white/[0.07]' : 'bg-white border-zinc-200 hover:border-zinc-300 shadow-sm'}`}>
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="flex gap-3 items-center">
-                      {/* Student Photo */}
-                      <div className="relative">
-                        <img 
-                          src={student?.photo || `https://picsum.photos/seed/${request.studentId}/100`} 
-                          className={`w-12 h-12 rounded-full object-cover border ${isDark ? 'border-white/10' : 'border-zinc-200'}`} 
-                          referrerPolicy="no-referrer"
-                          alt={request.studentName}
-                        />
-
-                      </div>
-                      
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <h3 className={`text-sm font-bold tracking-tight truncate ${isDark ? 'text-white' : 'text-zinc-900'}`}>{request.studentName}</h3>
-                          <Badge variant={request.type === 'Trial' ? 'gold' : request.type === 'Monthly' ? 'harbour' : 'outline'}>
-                            {request.type}
-                          </Badge>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <p className={`text-[9px] font-medium ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>{request.instrument}</p>
-                          <span className={`w-0.5 h-0.5 rounded-full ${isDark ? 'bg-white/20' : 'bg-zinc-300'}`} />
-                          <p className={`text-[9px] font-medium ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>New Student</p>
-                        </div>
-                      </div>
-                    </div>
-                    <button 
-                      onClick={() => setActiveLessonAction(request)}
-                      className={`p-1 ${isDark ? 'text-white/40' : 'text-zinc-400'}`}
-                    >
-                      <MoreVertical size={16} />
-                    </button>
-                  </div>
-
-                  {/* Requested Time Slot */}
-                  <div className={`border rounded-xl p-3 mb-4 flex items-center justify-between ${isDark ? 'bg-white/[0.03] border-white/5' : 'bg-zinc-50 border-zinc-100'}`}>
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isDark ? 'bg-white/10 text-white/60' : 'bg-zinc-200 text-zinc-600'}`}>
-                        <Calendar size={14} />
-                      </div>
-                      <div>
-                        <p className={`text-[10px] font-bold uppercase tracking-tighter ${isDark ? 'text-white/60' : 'text-zinc-500'}`}>
-                          {new Date(request.date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
-                        </p>
-                        <p className={`text-sm font-serif-curvy italic leading-none mt-0.5 ${isDark ? 'text-white' : 'text-zinc-900'}`}>{request.time}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Student Note */}
-                  {request.studentNote && (
-                    <div className={`mb-4 p-3 rounded-xl border-l-2 border-harbour-500 ${isDark ? 'bg-white/[0.03]' : 'bg-zinc-50'}`}>
-                      <p className={`text-[8px] font-mono uppercase tracking-widest mb-1 ${isDark ? 'text-white/30' : 'text-zinc-400'}`}>Student Note</p>
-                      <p className={`text-[10px] leading-relaxed ${isDark ? 'text-white/70' : 'text-zinc-600'}`}>"{request.studentNote}"</p>
-                    </div>
-                  )}
-
-                  <div className="flex gap-2">
-                    <button 
-                      onClick={() => {
-                        const student = MOCK_STUDENTS.find(s => s.id === request.studentId);
-                        if (student) {
-                          setSelectedChat(student);
-                          setView('messages');
-                        }
-                      }}
-                      className={`w-12 border flex items-center justify-center rounded-full transition-colors ${isDark ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-zinc-100 border-zinc-200 text-zinc-900 hover:bg-zinc-200'}`}
-                    >
-                      <MessageSquare size={16} />
-                    </button>
-                    <button 
-                      onClick={() => {
-                        triggerNotification('lesson_confirmed', 'Trial Confirmed', `${mentorProfile.name} confirmed your free trial on ${new Date(request.date).toLocaleDateString()} at ${request.time}`);
-                      }}
-                      className="flex-1 bg-harbour-600 text-white text-[10px] font-bold py-3 rounded-full hover:bg-harbour-500 transition-colors shadow-lg shadow-harbour-600/20"
-                    >
-                      Accept Request
-                    </button>
-                    <button 
-                      onClick={() => {
-                        triggerNotification('lesson_declined', 'Trial Declined', `Your trial request was declined. Find another mentor`);
-                      }}
-                      className={`flex-1 border text-[10px] font-bold py-3 rounded-full transition-colors ${isDark ? 'border-white/10 text-white hover:bg-white/5' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
-                    >
-                      Decline
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ) : (
-        <section className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-[9px] uppercase tracking-widest font-bold text-white/40">Schedule</h2>
+      {profileProgress === 100 ? (
+        <>
+          <div className={`flex gap-1 mb-6 p-1 rounded-full ${isDark ? 'bg-white/5' : 'bg-zinc-100'}`}>
             <button 
-              onClick={() => setView('full-schedule')}
-              className="text-[9px] font-bold text-harbour-500 hover:text-harbour-400 transition-colors flex items-center gap-1"
+              onClick={() => setHomeTab('today')}
+              className={`flex-1 py-2 rounded-full text-[9px] font-bold transition-all ${homeTab === 'today' ? (isDark ? 'bg-white text-black' : 'bg-white text-zinc-900 shadow-sm') : (isDark ? 'text-white/40' : 'text-zinc-400')}`}
             >
-              See all <ChevronRight size={10} />
+              Today
+            </button>
+            <button 
+              onClick={() => setHomeTab('pending')}
+              className={`flex-1 py-2 rounded-full text-[9px] font-bold transition-all ${homeTab === 'pending' ? (isDark ? 'bg-white text-black' : 'bg-white text-zinc-900 shadow-sm') : (isDark ? 'text-white/40' : 'text-zinc-400')}`}
+            >
+              Pending
             </button>
           </div>
-          <div className="space-y-3">
-            {MOCK_LESSONS.filter(l => l.status === 'confirmed').map(lesson => {
-              const student = MOCK_STUDENTS.find(s => s.id === lesson.studentId);
-              return (
-                <div key={lesson.id} className="bg-white/5 border border-white/10 p-4 rounded-2xl relative group transition-transform">
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="flex gap-3 items-center">
-                      {/* Student Photo */}
-                      <div className="relative">
-                        <img 
-                          src={student?.photo || `https://picsum.photos/seed/${lesson.studentId}/100`} 
-                          className="w-12 h-12 rounded-full object-cover border-2 border-white/10 shadow-lg" 
-                          referrerPolicy="no-referrer"
-                          alt={lesson.studentName}
-                        />
-                        <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-harbour-600 border-2 border-[#0A0A0A] rounded-full shadow-sm" />
-                      </div>
-                      
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <h3 className="text-sm font-bold tracking-tight truncate">{lesson.studentName}</h3>
-                          <Badge variant={lesson.type === 'Trial' ? 'gold' : lesson.type === 'Monthly' ? 'harbour' : 'outline'}>
-                            {lesson.type}
-                          </Badge>
-                        </div>
-                        <div className="flex items-center gap-2 text-white/40 text-[10px]">
-                          <span className="font-medium">{lesson.instrument}</span>
-                          <span className="w-1 h-1 bg-white/20 rounded-full" />
-                          <span>{new Date(lesson.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <button 
-                      onClick={() => setActiveLessonAction(lesson)}
-                      className="p-2 -mr-2 text-white/30 hover:text-white transition-colors"
-                    >
-                      <MoreVertical size={18} />
-                    </button>
-                  </div>
-                  
-                  {/* Time & Schedule Info */}
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="flex-1 bg-white/[0.03] border border-white/5 rounded-xl px-3 py-2 flex items-center gap-3">
-                      <div className="text-white/40">
-                        <Clock size={14} />
-                      </div>
-                      <div className="flex flex-col">
-                        <span className="text-[8px] font-bold uppercase tracking-widest text-white/30 leading-none mb-1">Scheduled Time</span>
-                        <span className="text-xs font-serif-curvy italic text-white/90">{lesson.time}</span>
-                      </div>
-                    </div>
-                    <div className="w-px h-8 bg-white/10" />
-                    <div className="flex flex-col items-end">
-                      <span className="text-[8px] font-mono uppercase tracking-widest text-white/30 mb-1">Lesson</span>
-                      <span className="text-xs font-bold text-white/80">#{lesson.lessonNumber}</span>
-                    </div>
-                  </div>
 
-                  <div className="flex items-center justify-between pt-3 border-t border-white/5">
-                    <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 bg-harbour-600 rounded-full shadow-[0_0_8px_rgba(131,72,54,0.4)]" />
-                      <span className="text-[9px] font-bold text-harbour-500/80 uppercase tracking-tight">Confirmed</span>
-                    </div>
-                    <button 
-                      onClick={() => {
-                        const student = MOCK_STUDENTS.find(s => s.id === lesson.studentId);
-                        if (student) setSelectedStudent(student);
-                        setSelectedLesson(lesson);
-                        setView('log-session');
-                      }}
-                      className="flex items-center gap-1.5 text-[10px] font-bold text-harbour-500 hover:text-harbour-400 transition-colors bg-walnut-50 px-3 py-1.5 rounded-full"
-                    >
-                      <Plus size={12} /> Log Session
-                    </button>
+          {homeTab === 'pending' ? (
+            <section className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className={`text-[9px] uppercase tracking-widest font-bold flex items-center gap-2 ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>
+                  Requests <span className="w-1 h-1 bg-red-500 rounded-full animate-pulse" />
+                </h2>
+                <span className={`text-[8px] font-mono ${isDark ? 'text-white/20' : 'text-zinc-400'}`}>
+                  {lessons.filter(l => l.status === 'pending').length} New
+                </span>
+              </div>
+              <div className="space-y-3">
+                {lessons.filter(l => l.status === 'pending').length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-40 gap-2">
+                    <Inbox size={28} className={isDark ? "text-white/20" : "text-zinc-200"} />
+                    <p className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? "text-white/40" : "text-zinc-400"}`}>No pending requests</p>
                   </div>
-                </div>
-              );
-            })}
+                ) : (
+                  lessons.filter(l => l.status === 'pending').map(request => {
+                    const student = realStudents.find(s => s.id === request.studentId) || MOCK_STUDENTS.find(s => s.id === request.studentId);
+                    return (
+                      <div key={request.id} className={`border p-4 rounded-2xl transition-all hover:shadow-lg ${isDark ? 'bg-white/5 border-white/10 hover:bg-white/[0.07]' : 'bg-white border-zinc-200 hover:border-zinc-300 shadow-sm'}`}>
+                        <div className="flex justify-between items-start mb-4">
+                          <div className="flex gap-3 items-center">
+                            {/* Student Photo */}
+                            <div className="relative">
+                              <img 
+                                src={student?.photo || `https://picsum.photos/seed/${request.studentId}/100`} 
+                                className={`w-12 h-12 rounded-full object-cover border ${isDark ? 'border-white/10' : 'border-zinc-200'}`} 
+                                referrerPolicy="no-referrer"
+                                alt={request.studentName}
+                              />
+                            </div>
+                            
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 mb-0.5">
+                                <h3 className={`text-sm font-bold tracking-tight truncate ${isDark ? 'text-white' : 'text-zinc-900'}`}>{request.studentName}</h3>
+                                <Badge variant={request.type === 'Trial' ? 'gold' : request.type === 'Monthly' ? 'harbour' : 'outline'}>
+                                  {request.type}
+                                </Badge>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <p className={`text-[9px] font-medium ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>{request.instrument}</p>
+                                <span className={`w-0.5 h-0.5 rounded-full ${isDark ? 'bg-white/20' : 'bg-zinc-300'}`} />
+                                <p className={`text-[9px] font-medium ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>New Student</p>
+                              </div>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => setActiveLessonAction(request)}
+                            className={`p-1 ${isDark ? 'text-white/40' : 'text-zinc-400'}`}
+                          >
+                            <MoreVertical size={16} />
+                          </button>
+                        </div>
+
+                        {/* Requested Time Slot */}
+                        <div className={`border rounded-xl p-3 mb-4 flex items-center justify-between ${isDark ? 'bg-white/[0.03] border-white/5' : 'bg-zinc-50 border-zinc-100'}`}>
+                          <div className="flex items-center gap-3">
+                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isDark ? 'bg-white/10 text-white/60' : 'bg-zinc-200 text-zinc-600'}`}>
+                              <Calendar size={14} />
+                            </div>
+                            <div>
+                              <p className={`text-[10px] font-bold uppercase tracking-tighter ${isDark ? 'text-white/60' : 'text-zinc-500'}`}>
+                                {new Date(request.date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+                              </p>
+                              <p className={`text-sm font-serif-curvy italic leading-none mt-0.5 ${isDark ? 'text-white' : 'text-zinc-900'}`}>{request.time}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Student Note */}
+                        {request.studentNote && (
+                          <div className={`mb-4 p-3 rounded-xl border-l-2 border-harbour-500 ${isDark ? 'bg-white/[0.03]' : 'bg-zinc-50'}`}>
+                            <p className={`text-[8px] font-mono uppercase tracking-widest mb-1 ${isDark ? 'text-white/30' : 'text-zinc-400'}`}>Student Note</p>
+                            <p className={`text-[10px] leading-relaxed ${isDark ? 'text-white/70' : 'text-zinc-600'}`}>"{request.studentNote}"</p>
+                          </div>
+                        )}
+
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => {
+                              const student = realStudents.find(s => s.id === request.studentId) || MOCK_STUDENTS.find(s => s.id === request.studentId);
+                              if (student) {
+                                setSelectedChat(student);
+                                setView('messages');
+                              }
+                            }}
+                            className={`w-12 border flex items-center justify-center rounded-full transition-colors ${isDark ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-zinc-100 border-zinc-200 text-zinc-900 hover:bg-zinc-200'}`}
+                          >
+                            <MessageSquare size={16} />
+                          </button>
+                          <button 
+                            onClick={() => {
+                              triggerNotification('lesson_confirmed', 'Trial Confirmed', `${mentorProfile.name} confirmed your free trial on ${new Date(request.date).toLocaleDateString()} at ${request.time}`);
+                            }}
+                            className="flex-1 bg-harbour-600 text-white text-[10px] font-bold py-3 rounded-full hover:bg-harbour-500 transition-colors shadow-lg shadow-harbour-600/20"
+                          >
+                            Accept Request
+                          </button>
+                          <button 
+                            onClick={() => {
+                              triggerNotification('lesson_declined', 'Trial Declined', `Your trial request was declined. Find another mentor`);
+                            }}
+                            className={`flex-1 border text-[10px] font-bold py-3 rounded-full transition-colors ${isDark ? 'border-white/10 text-white hover:bg-white/5' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
+                          >
+                            Decline
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </section>
+          ) : (
+            <section className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className={`text-[9px] uppercase tracking-widest font-bold ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>Schedule</h2>
+                <button 
+                  onClick={() => setView('full-schedule')}
+                  className="text-[9px] font-bold text-harbour-500 hover:text-harbour-400 transition-colors flex items-center gap-1"
+                >
+                  See all <ChevronRight size={10} />
+                </button>
+              </div>
+              <div className="space-y-3">
+                {lessons.filter(l => l.status === 'confirmed').length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-40 gap-2">
+                    <Calendar size={28} className={isDark ? "text-white/20" : "text-zinc-200"} />
+                    <p className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? "text-white/40" : "text-zinc-400"}`}>No lessons today</p>
+                  </div>
+                ) : (
+                  lessons.filter(l => l.status === 'confirmed').map(lesson => {
+                    const student = realStudents.find(s => s.id === lesson.studentId) || MOCK_STUDENTS.find(s => s.id === lesson.studentId);
+                    return (
+                      <div key={lesson.id} className={`border p-4 rounded-2xl relative group transition-transform ${isDark ? 'bg-white/5 border-white/10' : 'bg-white border-zinc-200 shadow-sm'}`}>
+                        <div className="flex justify-between items-start mb-4">
+                          <div className="flex gap-3 items-center">
+                            {/* Student Photo */}
+                            <div className="relative">
+                              <img 
+                                src={student?.photo || `https://picsum.photos/seed/${lesson.studentId}/100`} 
+                                className={`w-12 h-12 rounded-full object-cover border-2 ${isDark ? 'border-white/10' : 'border-zinc-100'} shadow-lg`} 
+                                referrerPolicy="no-referrer"
+                                alt={lesson.studentName}
+                              />
+                              <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-harbour-600 border-2 border-[#0A0A0A] rounded-full shadow-sm" />
+                            </div>
+                            
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <h3 className={`text-sm font-bold tracking-tight truncate ${isDark ? 'text-white' : 'text-zinc-900'}`}>{lesson.studentName}</h3>
+                                <Badge variant={lesson.type === 'Trial' ? 'gold' : lesson.type === 'Monthly' ? 'harbour' : 'outline'}>
+                                  {lesson.type}
+                                </Badge>
+                              </div>
+                              <div className={`flex items-center gap-2 text-[10px] ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>
+                                <span className="font-medium">{lesson.instrument}</span>
+                                <span className={`w-1 h-1 rounded-full ${isDark ? 'bg-white/20' : 'bg-zinc-300'}`} />
+                                <span>{new Date(lesson.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => setActiveLessonAction(lesson)}
+                            className={`p-2 -mr-2 transition-colors ${isDark ? 'text-white/30' : 'text-zinc-400'} hover:text-harbour-500`}
+                          >
+                            <MoreVertical size={18} />
+                          </button>
+                        </div>
+                        
+                        {/* Time & Schedule Info */}
+                        <div className="flex items-center gap-4 mb-4">
+                          <div className={`flex-1 border rounded-xl px-3 py-2 flex items-center gap-3 ${isDark ? 'bg-white/[0.03] border-white/5' : 'bg-zinc-50 border-zinc-100'}`}>
+                            <div className={isDark ? "text-white/40" : "text-zinc-400"}>
+                              <Clock size={14} />
+                            </div>
+                            <div className="flex flex-col">
+                              <span className={`text-[8px] font-bold uppercase tracking-widest leading-none mb-1 ${isDark ? 'text-white/30' : 'text-zinc-400'}`}>Scheduled Time</span>
+                              <span className={`text-xs font-serif-curvy italic ${isDark ? 'text-white/90' : 'text-zinc-900'}`}>{lesson.time}</span>
+                            </div>
+                          </div>
+                          <div className={`w-px h-8 ${isDark ? 'bg-white/10' : 'bg-zinc-200'}`} />
+                          <div className="flex flex-col items-end">
+                            <span className={`text-[8px] font-mono uppercase tracking-widest mb-1 ${isDark ? 'text-white/30' : 'text-zinc-400'}`}>Lesson</span>
+                            <span className={`text-xs font-bold ${isDark ? 'text-white/80' : 'text-zinc-900'}`}>#{lesson.lessonNumber}</span>
+                          </div>
+                        </div>
+
+                        <div className={`flex items-center justify-between pt-3 border-t ${isDark ? 'border-white/5' : 'border-zinc-100'}`}>
+                          <div className="flex items-center gap-2">
+                            <div className="w-1.5 h-1.5 bg-harbour-600 rounded-full shadow-[0_0_8px_rgba(131,72,54,0.4)]" />
+                            <span className="text-[9px] font-bold text-harbour-500/80 uppercase tracking-tight">Confirmed</span>
+                          </div>
+                          <button 
+                            onClick={() => {
+                              const student = realStudents.find(s => s.id === lesson.studentId) || MOCK_STUDENTS.find(s => s.id === lesson.studentId);
+                              if (student) setSelectedStudent(student);
+                              setSelectedLesson(lesson);
+                              setView('log-session');
+                            }}
+                            className="flex items-center gap-1.5 text-[10px] font-bold text-harbour-500 hover:text-harbour-400 transition-colors bg-walnut-50 px-3 py-1.5 rounded-full"
+                          >
+                            <Plus size={12} /> Log Session
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </section>
+          )}
+        </>
+      ) : (
+        <div className={`p-8 rounded-[2.5rem] border text-center space-y-4 ${isDark ? 'bg-white/5 border-white/10' : 'bg-zinc-50 border-zinc-200'}`}>
+          <div className="w-16 h-16 bg-harbour-500/20 text-harbour-500 rounded-full flex items-center justify-center mx-auto">
+            <Lock size={32} />
           </div>
-        </section>
+          <div className="space-y-1">
+            <h3 className={`text-base font-bold ${isDark ? 'text-white' : 'text-zinc-900'}`}>Complete your profile first</h3>
+            <p className={`text-xs leading-relaxed ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>
+              You need to reach 100% profile completion before you can start accepting students and managing lessons.
+            </p>
+          </div>
+          <button 
+            onClick={() => setView('profile')}
+            className="w-full py-4 bg-harbour-600 text-white text-[10px] font-bold uppercase tracking-widest rounded-full shadow-lg shadow-harbour-600/20"
+          >
+            Go to Profile
+          </button>
+        </div>
       )}
     </div>
   );
@@ -4197,7 +4872,7 @@ export default function App() {
 
       {/* Lessons List */}
       <div className="space-y-4">
-        {MOCK_LESSONS
+        {lessons
           .filter(l => l.status === 'confirmed')
           .filter(l => {
             if (scheduleFilter === 'all') return true;
@@ -4217,7 +4892,7 @@ export default function App() {
           })
           .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
           .map(lesson => {
-            const student = MOCK_STUDENTS.find(s => s.id === lesson.studentId);
+            const student = realStudents.find(s => s.id === lesson.studentId) || MOCK_STUDENTS.find(s => s.id === lesson.studentId);
             return (
               <div key={lesson.id} className="bg-white/5 border border-white/10 p-4 rounded-2xl relative group">
                 <div className="flex justify-between items-start mb-4">
@@ -4337,31 +5012,37 @@ export default function App() {
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 space-y-3">
-          {MOCK_STUDENTS.map((student, i) => (
-            <div 
-              key={student.id} 
-              onClick={() => setSelectedChat(student)}
-              className={`p-4 rounded-3xl border transition-all cursor-pointer ${isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-100 shadow-sm hover:border-zinc-200'}`}
-            >
-              <div className="flex items-center gap-4">
-                <div className="relative">
-                  <img src={student.photo} className="w-12 h-12 rounded-2xl object-cover" referrerPolicy="no-referrer" />
-                  {i === 0 && <div className={`absolute -top-1 -right-1 w-3.5 h-3.5 bg-harbour-500 rounded-full border-2 ${isDark ? 'border-black' : 'border-white'}`} />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-start mb-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-bold truncate">{student.name}</h3>
-                      <span className={`px-1.5 py-0.5 text-[7px] font-bold rounded uppercase tracking-widest ${isDark ? 'bg-white/10 text-white/40' : 'bg-zinc-100 text-zinc-500'}`}>Student</span>
-                    </div>
-                    <span className={`text-[8px] font-mono ${isDark ? 'text-white/30' : 'text-zinc-400'}`}>12:45 PM</span>
+          {realStudents.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full gap-2 opacity-30">
+              <MessageSquare size={40} />
+              <p className="text-xs font-bold uppercase tracking-widest">No conversations yet</p>
+            </div>
+          ) : (
+            realStudents.map((student, i) => (
+              <div 
+                key={student.id} 
+                onClick={() => setSelectedChat(student)}
+                className={`p-4 rounded-3xl border transition-all cursor-pointer ${isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-100 shadow-sm hover:border-zinc-200'}`}
+              >
+                <div className="flex items-center gap-4">
+                  <div className="relative">
+                    <img src={student.photo} className="w-12 h-12 rounded-2xl object-cover" referrerPolicy="no-referrer" />
+                    {i === 0 && <div className={`absolute -top-1 -right-1 w-3.5 h-3.5 bg-harbour-500 rounded-full border-2 ${isDark ? 'border-black' : 'border-white'}`} />}
                   </div>
-                  <p className="text-[9px] text-harbour-400 uppercase tracking-widest mb-1">{student.instrument}</p>
-                  <p className={`text-[11px] truncate ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>Thanks for the feedback! Looking forward to our next session.</p>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex justify-between items-start mb-1">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-bold truncate">{student.name}</h3>
+                        <span className={`px-1.5 py-0.5 text-[7px] font-bold rounded uppercase tracking-widest ${isDark ? 'bg-white/10 text-white/40' : 'bg-zinc-100 text-zinc-500'}`}>Student</span>
+                      </div>
+                      <span className={`text-[8px] font-mono ${isDark ? 'text-white/30' : 'text-zinc-400'}`}>12:45 PM</span>
+                    </div>
+                    <p className="text-[9px] text-harbour-400 uppercase tracking-widest mb-1">{student.instrument}</p>
+                    <p className={`text-[11px] truncate ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>Thanks for the feedback! Looking forward to our next session.</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            )))}
         </div>
       </div>
     );
@@ -4370,7 +5051,7 @@ export default function App() {
   const WalletView = () => {
     const handleWithdraw = async () => {
       const amount = parseFloat(withdrawAmount);
-      if (isNaN(amount) || amount <= 0 || amount > balance) return;
+      if (isNaN(amount) || amount <= 0 || amount > realBalance) return;
 
       setIsWithdrawing('processing');
       
@@ -4386,7 +5067,7 @@ export default function App() {
       };
 
       setWithdrawals([newWithdrawal, ...withdrawals]);
-      setBalance(balance - amount);
+      setRealBalance(realBalance - amount);
       setIsWithdrawing('success');
       
       // Keep success message for a bit then close
@@ -4409,7 +5090,7 @@ export default function App() {
         <div className="bg-zinc-900 text-white p-8 rounded-[2.5rem] mb-8 shadow-2xl relative overflow-hidden">
           <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-16 -mt-16 blur-3xl" />
           <p className="text-[9px] font-mono uppercase tracking-widest opacity-50 mb-1">Available Balance</p>
-          <p className="text-4xl font-serif-sturdy mb-6">RM {balance.toLocaleString()}</p>
+          <p className="text-4xl font-serif-sturdy mb-6">RM {realBalance.toLocaleString()}</p>
           <button 
             onClick={() => setShowWithdrawModal(true)}
             className="w-full py-4 bg-white text-zinc-900 text-[10px] font-bold uppercase tracking-widest rounded-full flex items-center justify-center gap-2 shadow-xl transition-transform"
@@ -4475,38 +5156,43 @@ export default function App() {
               </div>
 
               <div className="space-y-3">
-                {transactions.map(t => (
-                  <div key={t.id} className="bg-white border border-zinc-100 p-4 rounded-2xl shadow-sm">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-3">
-                        <img src={t.studentPhoto} className="w-10 h-10 rounded-xl object-cover" referrerPolicy="no-referrer" />
-                        <div>
-                          <p className="text-[11px] font-bold text-zinc-900">{t.studentName}</p>
-                          <p className="text-[9px] text-zinc-400">{new Date(t.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} • {t.lessonType}</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-[11px] font-serif-sturdy text-walnut-600">+RM {t.netAmount}</p>
-                        <p className="text-[8px] text-zinc-400">Net Credited</p>
-                      </div>
-                    </div>
-                    <div className="pt-3 border-t border-zinc-50 flex justify-between items-center">
-                      <div className="flex gap-4">
-                        <div>
-                          <p className="text-[7px] uppercase tracking-widest text-zinc-400 font-bold">Gross</p>
-                          <p className="text-[9px] font-medium text-zinc-600">RM {t.grossAmount}</p>
-                        </div>
-                        <div>
-                          <p className="text-[7px] uppercase tracking-widest text-zinc-400 font-bold">Fee (15%)</p>
-                          <p className="text-[9px] font-medium text-red-400">-RM {t.platformFee}</p>
-                        </div>
-                      </div>
-                      <button className="p-1.5 text-zinc-300 hover:text-zinc-900">
-                        <ChevronRight size={14} />
-                      </button>
-                    </div>
+                {realTransactions.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-40 gap-2 opacity-30">
+                    <Wallet size={28} />
+                    <p className="text-[10px] font-bold uppercase tracking-widest">No earnings yet</p>
                   </div>
-                ))}
+                ) : (
+                  realTransactions.map(t => (
+                    <div key={t.id} className="bg-white border border-zinc-100 p-4 rounded-2xl shadow-sm">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <img src={t.studentPhoto || `https://picsum.photos/seed/${t.studentId}/100`} className="w-10 h-10 rounded-xl object-cover" referrerPolicy="no-referrer" />
+                          <div>
+                            <p className="text-[11px] font-bold text-zinc-900">{t.studentName}</p>
+                            <p className="text-[9px] text-zinc-400">{new Date(t.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} • {t.lessonType}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-bold text-zinc-900">+RM {t.netAmount.toFixed(2)}</p>
+                          <p className="text-[8px] text-zinc-400">Net after fee</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between pt-3 border-t border-zinc-50">
+                        <div className="flex gap-4">
+                          <div className="flex flex-col">
+                            <span className="text-[8px] uppercase tracking-widest text-zinc-300 font-bold">Gross</span>
+                            <span className="text-[10px] font-mono text-zinc-500">RM {t.grossAmount.toFixed(2)}</span>
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-[8px] uppercase tracking-widest text-zinc-300 font-bold">Fee</span>
+                            <span className="text-[10px] font-mono text-zinc-500">-RM {t.platformFee.toFixed(2)}</span>
+                          </div>
+                        </div>
+                        <Badge variant="outline">Completed</Badge>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           ) : (
@@ -4581,7 +5267,7 @@ export default function App() {
                         </div>
                         <div className="mt-4 pt-4 border-t border-zinc-200 flex justify-between items-center">
                           <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">Available</span>
-                          <span className="text-[10px] font-bold text-zinc-900">RM {balance.toLocaleString()}</span>
+                          <span className="text-[10px] font-bold text-zinc-900">RM {realBalance.toLocaleString()}</span>
                         </div>
                       </div>
 
@@ -4605,7 +5291,7 @@ export default function App() {
                       </button>
                       <button 
                         onClick={handleWithdraw}
-                        disabled={!withdrawAmount || parseFloat(withdrawAmount) <= 0 || parseFloat(withdrawAmount) > balance}
+                        disabled={!withdrawAmount || parseFloat(withdrawAmount) <= 0 || parseFloat(withdrawAmount) > realBalance}
                         className="flex-[2] py-4 bg-zinc-900 text-white text-[10px] font-bold uppercase tracking-widest rounded-full shadow-xl disabled:opacity-50 disabled:shadow-none"
                       >
                         Confirm Withdrawal
@@ -4650,6 +5336,14 @@ export default function App() {
   };
 
   const ProfileView = () => {
+    const [editForm, setEditForm] = useState(mentorProfile);
+
+    useEffect(() => {
+      if (isEditingProfile) {
+        setEditForm(mentorProfile);
+      }
+    }, [isEditingProfile, mentorProfile]);
+
     const setupItems = [
       { id: 'video', label: 'Intro Video', icon: Video, status: 'warning', desc: 'Introduce yourself to students' },
       { id: 'bio', label: 'About & Bio', icon: User, status: 'success', desc: 'Your professional background' },
@@ -4673,14 +5367,35 @@ export default function App() {
             <div className="relative mb-6">
               <div className="w-28 h-28 rounded-[2.5rem] overflow-hidden border-4 border-white/10 shadow-2xl rotate-3 hover:rotate-0 transition-transform duration-500">
                 <img 
-                  src="https://picsum.photos/seed/mentor/400" 
+                  src={mentorProfile.photo || "https://picsum.photos/seed/mentor/400"} 
                   className="w-full h-full object-cover" 
                   referrerPolicy="no-referrer" 
                 />
               </div>
-              <button className="absolute -bottom-2 -right-2 w-10 h-10 bg-white text-zinc-900 rounded-2xl flex items-center justify-center shadow-xl transition-transform">
+              <button 
+                onClick={() => document.getElementById('photo-upload')?.click()}
+                className="absolute -bottom-2 -right-2 w-10 h-10 bg-white text-zinc-900 rounded-2xl flex items-center justify-center shadow-xl transition-transform"
+              >
                 <Camera size={18} />
               </button>
+              <input 
+                type="file" 
+                id="photo-upload" 
+                accept="image/*" 
+                className="hidden" 
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                      const base64 = reader.result as string;
+                      setMentorProfile({ ...mentorProfile, photo: base64 });
+                      saveMentorProfile({ photo: base64 });
+                    };
+                    reader.readAsDataURL(file);
+                  }
+                }}
+              />
             </div>
 
             <div className="space-y-2">
@@ -4721,16 +5436,19 @@ export default function App() {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="text-[9px] font-bold uppercase tracking-widest text-zinc-400 mb-1">Profile Strength</h3>
-                <p className="text-xl font-serif-sturdy text-zinc-900">60% Complete</p>
+                <p className="text-xl font-serif-sturdy text-zinc-900">{profileProgress}% Complete</p>
               </div>
-              <button className="text-[9px] font-bold text-walnut-600 uppercase tracking-widest bg-walnut-50 px-4 py-2.5 rounded-2xl hover:bg-walnut-100 transition-colors">
-                Complete Now
+              <button 
+                onClick={() => setView('profile')}
+                className="text-[9px] font-bold text-walnut-600 uppercase tracking-widest bg-walnut-50 px-4 py-2.5 rounded-2xl hover:bg-walnut-100 transition-colors"
+              >
+                {profileProgress === 100 ? 'View Profile' : 'Complete Now'}
               </button>
             </div>
             <div className="h-1.5 w-full bg-zinc-100 rounded-full overflow-hidden">
               <motion.div 
                 initial={{ width: 0 }}
-                animate={{ width: '60%' }}
+                animate={{ width: `${profileProgress}%` }}
                 className="h-full bg-gradient-to-r from-harbour-400 to-harbour-600 rounded-full"
               />
             </div>
@@ -4847,26 +5565,58 @@ export default function App() {
 
               <div className="flex-1 overflow-y-auto p-8 space-y-8">
                 {[
-                  { label: 'Full Name', value: mentorProfile.name, key: 'name', type: 'text' },
-                  { label: 'Email Address', value: mentorProfile.email, key: 'email', type: 'email' },
-                  { label: 'Phone Number', value: mentorProfile.phone, key: 'phone', type: 'tel' },
-                  { label: 'Location', value: mentorProfile.location, key: 'location', type: 'text' },
+                  { label: 'Full Name', value: editForm.name, key: 'name', type: 'text' },
+                  { label: 'Email Address', value: editForm.email, key: 'email', type: 'email' },
+                  { label: 'Phone Number', value: editForm.phone, key: 'phone', type: 'tel' },
+                  { label: 'Location', value: editForm.location, key: 'location', type: 'text' },
+                  { label: 'About / Bio', value: editForm.about, key: 'about', type: 'textarea' },
+                  { label: 'Price Per Lesson (RM)', value: editForm.pricePerLesson.toString(), key: 'pricePerLesson', type: 'number' },
+                  { label: 'Specialisation (comma separated)', value: editForm.specialisation.join(', '), key: 'specialisation', type: 'text' },
+                  { label: 'Languages (comma separated)', value: editForm.languages.join(', '), key: 'languages', type: 'text' },
+                  { label: 'Intro Video URL', value: editForm.introVideoUrl || '', key: 'introVideoUrl', type: 'url' },
                 ].map((field) => (
                   <div key={field.key} className="space-y-3">
                     <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-400 ml-1">{field.label}</label>
-                    <input 
-                      type={field.type} 
-                      value={field.value}
-                      onChange={(e) => setMentorProfile({...mentorProfile, [field.key]: e.target.value})}
-                      className="w-full p-5 bg-zinc-50 border border-zinc-100 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-zinc-900/5 focus:bg-white transition-all"
-                    />
+                    {field.type === 'textarea' ? (
+                      <textarea 
+                        value={field.value}
+                        onChange={(e) => setEditForm({...editForm, [field.key]: e.target.value})}
+                        className="w-full p-5 bg-zinc-50 border border-zinc-100 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-zinc-900/5 focus:bg-white transition-all min-h-[120px]"
+                        placeholder={`Enter your ${field.label.toLowerCase()}...`}
+                      />
+                    ) : (
+                      <input 
+                        type={field.type} 
+                        value={field.value}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setEditForm({...editForm, [field.key]: val});
+                        }}
+                        className="w-full p-5 bg-zinc-50 border border-zinc-100 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-zinc-900/5 focus:bg-white transition-all"
+                      />
+                    )}
                   </div>
                 ))}
               </div>
 
               <div className="p-8 bg-white border-t border-zinc-50">
                 <button 
-                  onClick={() => setIsEditingProfile(false)}
+                  onClick={() => {
+                    // Process arrays and numbers before saving
+                    const finalProfile = {
+                      ...editForm,
+                      pricePerLesson: parseFloat(editForm.pricePerLesson.toString()) || 0,
+                      specialisation: typeof editForm.specialisation === 'string' 
+                        ? (editForm.specialisation as string).split(',').map(s => s.trim()).filter(s => s.length > 0)
+                        : editForm.specialisation,
+                      languages: typeof editForm.languages === 'string'
+                        ? (editForm.languages as string).split(',').map(s => s.trim()).filter(s => s.length > 0)
+                        : editForm.languages
+                    };
+                    setMentorProfile(finalProfile);
+                    saveMentorProfile(finalProfile);
+                    setIsEditingProfile(false);
+                  }}
                   className="w-full py-5 bg-zinc-900 text-white text-sm font-bold rounded-full shadow-2xl transition-transform"
                 >
                   Save Changes
@@ -4942,8 +5692,8 @@ export default function App() {
         const coveredText = sentences.slice(0, Math.ceil(sentences.length / 2)).join('. ') + '.';
         const focusText = sentences.slice(Math.ceil(sentences.length / 2)).join('. ') + '.';
         
-        setCovered(coveredText || "Focused on " + selectedStudent.instrument + " techniques discussed today.");
-        setNextFocus(focusText || "Continue practicing the exercises from today's lesson.");
+        setSessionCovered(coveredText || "Focused on " + selectedStudent.instrument + " techniques discussed today.");
+        setSessionFocus(focusText || "Continue practicing the exercises from today's lesson.");
         
         if (aiBrainDump.length > 50 && selectedStudent.learningPath && selectedStudent.learningPath.length > 0) {
           setSelectedMilestones([selectedStudent.learningPath[0].id]);
@@ -4956,14 +5706,7 @@ export default function App() {
     };
 
     const handleSave = () => {
-      triggerNotification('session_logged', 'Session Logged', `${mentorProfile.name} has added notes from your Lesson ${selectedLesson.lessonNumber}`);
-      if (selectedMilestones.length > 0) {
-        const milestone = selectedStudent.learningPath?.find(m => m.id === selectedMilestones[0]);
-        if (milestone) {
-          triggerNotification('milestone_completed', 'Milestone Completed', `You completed ${milestone.title}! Keep going`);
-        }
-      }
-      setView('home');
+      handleSaveSession();
     };
 
     return (
@@ -5028,8 +5771,8 @@ export default function App() {
             <div className="space-y-2">
               <label className="text-[9px] uppercase tracking-widest font-bold text-zinc-400">What did you cover?</label>
               <textarea 
-                value={covered}
-                onChange={(e) => setCovered(e.target.value)}
+                value={sessionCovered}
+                onChange={(e) => setSessionCovered(e.target.value)}
                 className="w-full bg-zinc-50 border border-zinc-100 rounded-2xl p-4 text-xs min-h-[120px] focus:outline-none text-zinc-900 leading-relaxed"
                 placeholder="Topics taught, techniques explored..."
               />
@@ -5039,8 +5782,8 @@ export default function App() {
             <div className="space-y-2">
               <label className="text-[9px] uppercase tracking-widest font-bold text-zinc-400">Practice focus for next session</label>
               <textarea 
-                value={nextFocus}
-                onChange={(e) => setNextFocus(e.target.value)}
+                value={sessionFocus}
+                onChange={(e) => setSessionFocus(e.target.value)}
                 className="w-full bg-amber-50/30 border border-amber-100/50 rounded-2xl p-4 text-xs min-h-[80px] focus:outline-none text-zinc-900 italic"
                 placeholder="What should the student work on?"
               />
@@ -5143,8 +5886,16 @@ export default function App() {
   const StudentDetailView = () => {
     if (!selectedStudent) return null;
 
-    const studentLogs = MOCK_SESSION_LOGS.filter(log => log.studentId === selectedStudent.id);
+    const studentLogs = [...realSessionLogs]
+      .filter(log => log.studentId === selectedStudent.id)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    
     const studentMaterials = MOCK_MATERIALS.filter(mat => mat.studentId === selectedStudent.id);
+
+    const lastLesson = studentLogs[0];
+    const lessonsDone = studentLogs.length;
+    const totalLessons = 8; // Assuming a standard 8-lesson package for now
+    const progressPercent = Math.min(Math.round((lessonsDone / totalLessons) * 100), 100);
 
     const toggleMilestone = (milestoneId: string) => {
       if (!selectedStudent || !selectedStudent.learningPath) return;
@@ -5203,26 +5954,28 @@ export default function App() {
           <div className="grid grid-cols-3 gap-4 py-6 border-y border-white/5 relative z-10">
             <div className="text-center">
               <p className="text-[8px] uppercase tracking-widest font-bold text-white/30 mb-1">Done</p>
-              <p className="text-sm font-bold text-teal-400">4/8 <span className="text-[10px] text-white/20">lessons</span></p>
+              <p className="text-sm font-bold text-teal-400">{lessonsDone}/{totalLessons} <span className="text-[10px] text-white/20">lessons</span></p>
             </div>
             <div className="text-center border-x border-white/5">
               <p className="text-[8px] uppercase tracking-widest font-bold text-white/30 mb-1">Progress</p>
-              <p className="text-sm font-bold text-white">50%</p>
+              <p className="text-sm font-bold text-white">{progressPercent}%</p>
             </div>
             <div className="text-center">
               <p className="text-[8px] uppercase tracking-widest font-bold text-white/30 mb-1">Last</p>
-              <p className="text-sm font-bold text-amber-400">Mar 18</p>
+              <p className="text-sm font-bold text-amber-400">
+                {lastLesson ? new Date(lastLesson.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'None'}
+              </p>
             </div>
           </div>
 
           {/* Progress Bar Area */}
           <div className="mt-6 relative z-10">
             <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden mb-3">
-              <div className="h-full w-1/2 bg-gradient-to-r from-teal-600 to-teal-400 rounded-full" />
+              <div className="h-full bg-gradient-to-r from-teal-600 to-teal-400 rounded-full transition-all duration-1000" style={{ width: `${progressPercent}%` }} />
             </div>
             <div className="flex justify-between items-center text-[9px] font-bold uppercase tracking-widest">
-              <span className="text-white/40">Stage 2 of 4</span>
-              <span className="text-teal-400">On Track</span>
+              <span className="text-white/40">Stage {Math.ceil(progressPercent / 25) || 1} of 4</span>
+              <span className="text-teal-400">{progressPercent >= 100 ? 'Completed' : 'On Track'}</span>
             </div>
           </div>
         </header>
@@ -5551,7 +6304,7 @@ export default function App() {
           </button>
           <button 
             onClick={() => {
-              const lastLog = MOCK_SESSION_LOGS.filter(l => l.studentId === selectedStudent.id).sort((a,b) => b.lessonNumber - a.lessonNumber)[0];
+              const lastLog = realSessionLogs.filter(l => l.studentId === selectedStudent.id).sort((a,b) => b.lessonNumber - a.lessonNumber)[0];
               const nextLessonNumber = lastLog ? lastLog.lessonNumber + 1 : 1;
               setSelectedLesson({
                 id: 'new',
@@ -5632,27 +6385,37 @@ export default function App() {
                 </motion.div>
                 <div className="space-y-3 px-8">
                   <h4 className="text-xl font-serif-sturdy text-zinc-900 tracking-tight">
-                    {isStudent ? "Elevate Your Practice" : "Maestro Teaching Assistant"}
+                    {isStudent ? (isNewUser ? "Welcome to Your Journey!" : "Elevate Your Practice") : (isNewUser ? "Welcome, Maestro!" : "Maestro Teaching Assistant")}
                   </h4>
                   <p className="text-sm text-zinc-500 max-w-[280px] mx-auto leading-relaxed">
                     {isStudent 
-                      ? "I'm your dedicated music companion, here to help you master your instrument between lessons." 
-                      : "I'm your AI-powered assistant, ready to help you draft summaries, create practice plans, and track student growth."}
+                      ? (isNewUser ? "I'm your AI Buddy. I'll help you find a mentor, pick an instrument, and start your musical journey." : "I'm your dedicated music companion, here to help you master your instrument between lessons.") 
+                      : (isNewUser ? "I'm here to help you set up your profile, manage your first students, and organize your teaching materials." : "I'm your AI-powered assistant, ready to help you draft summaries, create practice plans, and track student growth.")}
                   </p>
                 </div>
                 
                 <div className="grid grid-cols-1 gap-3 px-8 max-w-[320px] mx-auto">
-                  <p className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Quick Start</p>
-                  {(isStudent ? [
+                  <p className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest mb-1">
+                    {isNewUser ? "Starter Tips" : "Quick Start"}
+                  </p>
+                  {(isStudent ? (isNewUser ? [
+                    { label: "How to find a mentor?", icon: Search, prompt: "How do I find the right mentor for me?" },
+                    { label: "Pick an instrument", icon: Music, prompt: "Which instrument should I start with?" },
+                    { label: "First lesson tips", icon: Sparkles, prompt: "What should I expect in my first lesson?" }
+                  ] : [
                     { label: "Practice Plan", icon: Target, prompt: "What should I practice today?" },
                     { label: "Lesson Recap", icon: MessageCircle, prompt: "Summarize my last lesson" },
                     { label: "Next Steps", icon: Zap, prompt: "Explain my next milestone" },
                     { label: "Ask Anything", icon: Sparkles, prompt: "" }
+                  ]) : (isNewUser ? [
+                    { label: "Complete my profile", icon: User, prompt: "How do I make my profile stand out?" },
+                    { label: "Set availability", icon: Calendar, prompt: "How do I set my teaching hours?" },
+                    { label: "Upload resources", icon: Upload, prompt: "What kind of materials should I upload first?" }
                   ] : [
                     { label: "Draft Lesson Summary", icon: MessageCircle, prompt: "Suggest a lesson summary" },
                     { label: "Create Practice Plan", icon: Target, prompt: "Draft a practice plan for Sarah" },
                     { label: "Analyze Progress", icon: Brain, prompt: "Analyze Marcus's progress" }
-                  ]).map((action) => (
+                  ])).map((action) => (
                     <button 
                       key={action.label}
                       onClick={() => handleAIBuddyAction(action.prompt || action.label)}
@@ -5884,7 +6647,7 @@ export default function App() {
           </AnimatePresence>
 
           {/* Verification Popup */}
-          {profileProgress === 100 && (
+          {profileProgress === 100 && !hasSeenVerification && (
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -5904,7 +6667,7 @@ export default function App() {
                   Verifying your account. Typically takes 3-5 days.
                 </p>
                 <button 
-                  onClick={() => setProfileProgress(101)}
+                  onClick={() => setHasSeenVerification(true)}
                   className="w-full py-4 bg-zinc-900 text-white text-xs font-bold rounded-full"
                 >
                   Got it
@@ -6105,7 +6868,7 @@ export default function App() {
                   setShowBookingSheet(false);
                   setBookingSuccess(null);
                   setBookingStep(1);
-                  setStudentView('journey');
+                  switchStudentTab('journey');
                 }}
                 className="w-full py-5 bg-white text-black font-bold rounded-full"
               >
@@ -6127,9 +6890,17 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Consolidated Single Session Flow */}
-              {bookingType === 'single' && (
-                <div className="space-y-8 max-h-[75vh] overflow-y-auto pr-2 scrollbar-hide">
+              <AnimatePresence mode="wait">
+                {/* Consolidated Single Session Flow */}
+                {bookingType === 'single' && (
+                  <motion.div 
+                    key="single-flow"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="space-y-8 pr-2 scrollbar-hide"
+                  >
                   <div className="space-y-8">
                     {/* Date Selection */}
                     <div>
@@ -6187,7 +6958,7 @@ export default function App() {
                               <h4 className="text-2xl font-serif-sturdy">RM 60</h4>
                             </div>
                             <button 
-                              onClick={() => setBookingSuccess({ type: 'single', mentor: selectedMentor.name })}
+                              onClick={() => handleBookingConfirm('single')}
                               className="px-8 py-4 bg-harbour-500 text-white font-bold rounded-full shadow-lg shadow-harbour-500/20"
                             >
                               Pay Now
@@ -6197,12 +6968,19 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                </div>
+                </motion.div>
               )}
 
               {/* Consolidated Package Flow */}
               {bookingType === 'package' && (
-                <div className="space-y-8 max-h-[75vh] overflow-y-auto pr-2 scrollbar-hide">
+                <motion.div 
+                  key="package-flow"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="space-y-8 pr-2 scrollbar-hide"
+                >
                   {/* Package Selection */}
                   <div>
                     <h4 className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-3">1. Select Package</h4>
@@ -6294,7 +7072,7 @@ export default function App() {
                                 <h4 className="text-2xl font-serif-sturdy">RM {selectedPackage.price}</h4>
                               </div>
                               <button 
-                                onClick={() => setBookingSuccess({ type: 'package', mentor: selectedMentor.name })}
+                                onClick={() => handleBookingConfirm('package')}
                                 className="px-8 py-4 bg-harbour-500 text-white font-bold rounded-full shadow-lg shadow-harbour-500/20"
                               >
                                 Confirm & Pay
@@ -6304,12 +7082,19 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                </div>
+                </motion.div>
               )}
 
               {/* Consolidated Trial Flow */}
               {bookingType === 'trial' && (
-                <div className="space-y-8 max-h-[75vh] overflow-y-auto pr-2 scrollbar-hide">
+                <motion.div 
+                  key="trial-flow"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="space-y-8 pr-2 scrollbar-hide"
+                >
                   <div className="space-y-8">
                     {/* Date Selection */}
                     <div>
@@ -6361,17 +7146,15 @@ export default function App() {
 
                     <button 
                       disabled={!bookingDate || !bookingTime}
-                      onClick={() => {
-                        setBookingSuccess({ type: 'trial', mentor: selectedMentor.name });
-                        setIsTrialCompleted(true);
-                      }}
+                      onClick={() => handleBookingConfirm('trial')}
                       className="w-full py-5 bg-white text-black font-bold rounded-full disabled:opacity-50 shadow-xl"
                     >
                       Confirm Free Trial
                     </button>
                   </div>
-                </div>
+                </motion.div>
               )}
+            </AnimatePresence>
             </div>
           )}
         </div>

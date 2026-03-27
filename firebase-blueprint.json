@@ -2,23 +2,70 @@
   "entities": {
     "User": {
       "title": "User",
-      "description": "User profile for both students and mentors",
+      "description": "Core user profile for students, mentors, and admins",
       "type": "object",
       "properties": {
         "uid": { "type": "string" },
         "name": { "type": "string" },
         "email": { "type": "string" },
-        "role": { "type": "string", "enum": ["student", "mentor"] },
+        "role": { "type": "string", "enum": ["student", "mentor", "admin"] },
         "photo": { "type": "string" },
         "instrument": { "type": "string" },
+        "level": { "type": "string" },
+        "bio": { "type": "string" },
         "location": { "type": "string" },
-        "phone": { "type": "string" }
+        "phone": { "type": "string" },
+        "joinedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "name", "email", "role"]
     },
+    "Student": {
+      "title": "Student",
+      "description": "Student-specific metadata",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "assignedMentorId": { "type": "string" },
+        "learningStage": { "type": "string" },
+        "goals": { "type": "array", "items": { "type": "string" } },
+        "currentStreak": { "type": "integer" },
+        "totalLessons": { "type": "integer" },
+        "completedMilestones": { "type": "integer" },
+        "myJourneySummary": { "type": "string" },
+        "growthScore": { "type": "number" }
+      }
+    },
+    "Mentor": {
+      "title": "Mentor",
+      "description": "Mentor-specific metadata",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "specialties": { "type": "array", "items": { "type": "string" } },
+        "experienceYears": { "type": "integer" },
+        "availability": { "type": "string" },
+        "rating": { "type": "number" },
+        "languages": { "type": "array", "items": { "type": "string" } },
+        "teachingStyle": { "type": "array", "items": { "type": "string" } },
+        "isVerified": { "type": "boolean" }
+      }
+    },
+    "MentorStudent": {
+      "title": "MentorStudent",
+      "description": "Mapping between mentors and students",
+      "type": "object",
+      "properties": {
+        "mentorId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "pending", "completed"] },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "currentPlan": { "type": "string" },
+        "notes": { "type": "string" }
+      }
+    },
     "Lesson": {
       "title": "Lesson",
-      "description": "Lesson session details",
+      "description": "Individual lesson records",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
@@ -27,9 +74,75 @@
         "date": { "type": "string" },
         "time": { "type": "string" },
         "status": { "type": "string", "enum": ["pending", "confirmed", "completed", "cancelled"] },
-        "type": { "type": "string", "enum": ["trial", "single", "package"] }
+        "type": { "type": "string", "enum": ["trial", "single", "package"] },
+        "lessonTopic": { "type": "string" },
+        "notes": { "type": "string" },
+        "homework": { "type": "string" },
+        "createdBy": { "type": "string" }
       },
-      "required": ["studentId", "mentorId", "date", "time", "status"]
+      "required": ["studentId", "mentorId", "date", "status"]
+    },
+    "Upload": {
+      "title": "Upload",
+      "description": "Student practice uploads",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "mentorId": { "type": "string" },
+        "type": { "type": "string", "enum": ["pdf", "audio", "video"] },
+        "fileUrl": { "type": "string" },
+        "fileName": { "type": "string" },
+        "uploadedAt": { "type": "string", "format": "date-time" },
+        "feedbackStatus": { "type": "string", "enum": ["pending", "provided"] }
+      }
+    },
+    "Feedback": {
+      "title": "Feedback",
+      "description": "Feedback from mentors on lessons or uploads",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "mentorId": { "type": "string" },
+        "lessonId": { "type": "string" },
+        "uploadId": { "type": "string" },
+        "feedbackText": { "type": "string" },
+        "rating": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "JourneyEntry": {
+      "title": "JourneyEntry",
+      "description": "Entries for the My Journey timeline",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "mentorId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "type": { "type": "string", "enum": ["milestone", "reflection", "lesson", "feedback", "achievement"] },
+        "date": { "type": "string", "format": "date-time" },
+        "mediaUrl": { "type": "string" },
+        "visibleToStudent": { "type": "boolean" }
+      }
+    },
+    "GrowthMetric": {
+      "title": "GrowthMetric",
+      "description": "Metrics for the Growth tab visualization",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "practiceConsistency": { "type": "number" },
+        "confidenceScore": { "type": "number" },
+        "skillLevel": { "type": "number" },
+        "mentorRating": { "type": "number" },
+        "streak": { "type": "integer" },
+        "completedLessons": { "type": "integer" }
+      }
     },
     "Notification": {
       "title": "Notification",
@@ -48,17 +161,15 @@
     }
   },
   "firestore": {
-    "/users/{userId}": {
-      "schema": "User",
-      "description": "User profile documents"
-    },
-    "/lessons/{lessonId}": {
-      "schema": "Lesson",
-      "description": "Lesson documents"
-    },
-    "/notifications/{notificationId}": {
-      "schema": "Notification",
-      "description": "Notification documents"
-    }
+    "/users/{uid}": { "schema": "User", "description": "User profiles" },
+    "/students/{userId}": { "schema": "Student", "description": "Student metadata" },
+    "/mentors/{userId}": { "schema": "Mentor", "description": "Mentor metadata" },
+    "/mentor_students/{id}": { "schema": "MentorStudent", "description": "Mentor-Student relationships" },
+    "/lessons/{id}": { "schema": "Lesson", "description": "Lesson records" },
+    "/uploads/{id}": { "schema": "Upload", "description": "Student uploads" },
+    "/feedback/{id}": { "schema": "Feedback", "description": "Mentor feedback" },
+    "/journey_entries/{id}": { "schema": "JourneyEntry", "description": "Journey timeline entries" },
+    "/growth_metrics/{id}": { "schema": "GrowthMetric", "description": "Growth tracking data" },
+    "/notifications/{id}": { "schema": "Notification", "description": "Notification documents" }
   }
 }

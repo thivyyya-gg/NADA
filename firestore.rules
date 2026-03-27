@@ -6,10 +6,28 @@ service cloud.firestore {
     // ===============================================================
     //
     // Collection: users
-    // Fields: uid, name, email, role, photo, instrument, location, phone
+    // Fields: uid, name, email, role, photo, instrument, level, bio, joinedAt, createdAt
+    //
+    // Collection: students
+    // Fields: userId, learningStage, goals, currentStreak, totalLessons, completedMilestones, growthScore
+    //
+    // Collection: mentors
+    // Fields: userId, specialties, experienceYears, availability, rating, isVerified
+    //
+    // Collection: mentor_students
+    // Fields: mentorId, studentId, status, startedAt, currentPlan
     //
     // Collection: lessons
-    // Fields: studentId, mentorId, date, time, status, type
+    // Fields: studentId, mentorId, instrument, date, status, type, duration, topic, notes, createdAt
+    //
+    // Collection: uploads
+    // Fields: studentId, title, type, url, thumbnail, status, feedbackCount, instrument, createdAt, serverCreatedAt
+    //
+    // Collection: feedback
+    // Fields: uploadId, mentorId, mentorName, text, timestamp, createdAt
+    //
+    // Collection: journey_entries
+    // Fields: studentId, mentorId, title, description, type, date, visibleToStudent
     //
     // Collection: notifications
     // Fields: userId, type, title, body, read, createdAt
@@ -36,11 +54,11 @@ service cloud.firestore {
              data.uid is string &&
              data.name is string && data.name.size() < 100 &&
              data.email is string &&
-             data.role in ['student', 'mentor'];
+             data.role in ['student', 'mentor', 'admin'];
     }
 
     function isValidLesson(data) {
-      return data.keys().hasAll(['studentId', 'mentorId', 'date', 'time', 'status']) &&
+      return data.keys().hasAll(['studentId', 'mentorId', 'date', 'status']) &&
              data.status in ['pending', 'confirmed', 'completed', 'cancelled'];
     }
 
@@ -55,10 +73,47 @@ service cloud.firestore {
       allow update: if isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role;
     }
 
-    match /lessons/{lessonId} {
+    match /students/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId) || isAdmin();
+    }
+
+    match /mentors/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId) || isAdmin();
+    }
+
+    match /mentor_students/{relId} {
       allow read: if isAuthenticated() && (request.auth.uid == resource.data.studentId || request.auth.uid == resource.data.mentorId);
-      allow create: if isAuthenticated() && isValidLesson(request.resource.data) && (request.auth.uid == request.resource.data.studentId || request.auth.uid == request.resource.data.mentorId);
-      allow update: if isAuthenticated() && isValidLesson(request.resource.data) && (request.auth.uid == resource.data.studentId || request.auth.uid == resource.data.mentorId);
+      allow write: if isAuthenticated() && (request.auth.uid == request.resource.data.studentId || request.auth.uid == request.resource.data.mentorId || isAdmin());
+    }
+
+    match /lessons/{lessonId} {
+      allow read: if isAuthenticated() && (
+        request.auth.uid == resource.data.studentId || 
+        request.auth.uid == resource.data.mentorId || 
+        isAdmin()
+      );
+      allow create: if isAuthenticated() && isValidLesson(request.resource.data) && (request.auth.uid == request.resource.data.studentId || request.auth.uid == request.resource.data.mentorId || isAdmin());
+      allow update: if isAuthenticated() && isValidLesson(request.resource.data) && (request.auth.uid == resource.data.studentId || request.auth.uid == resource.data.mentorId || isAdmin());
+    }
+
+    match /uploads/{uploadId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.studentId;
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.studentId || isAdmin());
+    }
+
+    match /feedback/{feedbackId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.mentorId;
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.mentorId || isAdmin());
+    }
+
+    match /journey_entries/{entryId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.studentId || request.auth.uid == resource.data.mentorId);
+      allow create: if isAuthenticated() && (request.auth.uid == request.resource.data.studentId || request.auth.uid == request.resource.data.mentorId);
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.studentId || request.auth.uid == resource.data.mentorId || isAdmin());
     }
 
     match /notifications/{notificationId} {

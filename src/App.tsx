@@ -1613,6 +1613,7 @@ export default function App() {
     photo: '',
     about: '',
     tagline: '',
+    birthday: '',
     specialisation: [],
     pricePerLesson: 0,
     location: '',
@@ -1637,6 +1638,21 @@ export default function App() {
   const [sessionFocus, setSessionFocus] = useState('');
   const [mentorsLoading, setMentorsLoading] = useState(true);
   const [studentsLoading, setStudentsLoading] = useState(true);
+  const [studentActiveLesson, setStudentActiveLesson] = useState<any>(null);
+  const [studentLessons, setStudentLessons] = useState<any[]>([]);
+  const [studentLogs, setStudentLogs] = useState<any[]>([]);
+  const [studentTransactions, setStudentTransactions] = useState<any[]>([]);
+  const [studentProfile, setStudentProfile] = useState<any>({
+    name: '',
+    email: '',
+    photo: '',
+    aboutMe: '',
+    instrument: '',
+    birthday: '',
+  });
+  const [selectedChat, setSelectedChat] = useState<any>(null);
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
 
   // Firebase Auth Listener
   useEffect(() => {
@@ -1769,6 +1785,213 @@ export default function App() {
     return () => unsub();
   }, [isAuth, isStudent, currentUser]);
 
+  // Student Active Lesson Listener
+  useEffect(() => {
+    if (!currentUser || !isStudent) return;
+    
+    const q = query(
+      collection(db, 'lessons'),
+      where('studentId', '==', currentUser.uid),
+      where('status', 'in', ['pending', 'confirmed']),
+      orderBy('createdAt', 'desc')
+    );
+    
+    const unsub = onSnapshot(q, (snap) => {
+      if (!snap.empty) {
+        setStudentActiveLesson({
+          id: snap.docs[0].id,
+          ...snap.docs[0].data()
+        });
+      } else {
+        setStudentActiveLesson(null);
+      }
+    });
+    
+    return () => unsub();
+  }, [currentUser, isStudent]);
+
+  // Student Journey Data Listener
+  useEffect(() => {
+    if (!currentUser || !isStudent) return;
+    
+    const lessonsQuery = query(
+      collection(db, 'lessons'),
+      where('studentId', '==', currentUser.uid),
+      orderBy('createdAt', 'desc')
+    );
+    
+    const logsQuery = query(
+      collection(db, 'sessionLogs'),
+      where('studentId', '==', currentUser.uid),
+      orderBy('createdAt', 'desc')
+    );
+    
+    const unsub1 = onSnapshot(lessonsQuery, (snap) => {
+      setStudentLessons(snap.docs.map(d => ({
+        id: d.id, ...d.data()
+      })));
+    });
+    
+    const unsub2 = onSnapshot(logsQuery, (snap) => {
+      setStudentLogs(snap.docs.map(d => ({
+        id: d.id, ...d.data()
+      })));
+    });
+    
+    return () => { unsub1(); unsub2(); };
+  }, [currentUser, isStudent]);
+
+  // Student Profile Listener
+  useEffect(() => {
+    if (!currentUser || !isStudent) return;
+    const unsub = onSnapshot(
+      doc(db, 'students', currentUser.uid),
+      (snap) => {
+        if (snap.exists()) {
+          setStudentProfile(prev => ({
+            ...prev,
+            ...snap.data()
+          }));
+        }
+      }
+    );
+    return () => unsub();
+  }, [currentUser, isStudent]);
+
+  // Conversations Listener
+  useEffect(() => {
+    if (!currentUser || !isStudent) return;
+    
+    const q = query(
+      collection(db, 'conversations'),
+      where('participants', 'array-contains', currentUser.uid),
+      orderBy('lastMessageAt', 'desc')
+    );
+    
+    const unsub = onSnapshot(q, (snap) => {
+      setConversations(snap.docs.map(d => ({
+        id: d.id, ...d.data()
+      })));
+    });
+    
+    return () => unsub();
+  }, [currentUser, isStudent]);
+
+  // Messages Listener
+  useEffect(() => {
+    if (!selectedChat?.conversationId) return;
+    
+    const q = query(
+      collection(db, 'conversations', 
+        selectedChat.conversationId, 'messages'),
+      orderBy('timestamp', 'asc')
+    );
+    
+    const unsub = onSnapshot(q, (snap) => {
+      setMessages(snap.docs.map(d => ({
+        id: d.id,
+        text: d.data().text,
+        isMe: d.data().senderId === currentUser?.uid,
+        time: d.data().timestamp?.toDate()
+          ?.toLocaleTimeString([], { 
+            hour: '2-digit', 
+            minute: '2-digit' 
+          }) || ''
+      })));
+    });
+    
+    return () => unsub();
+  }, [selectedChat?.conversationId]);
+
+  const saveStudentProfile = async (updates: any) => {
+    if (!currentUser) return;
+    try {
+      await updateDoc(
+        doc(db, 'students', currentUser.uid), 
+        { ...updates, updatedAt: serverTimestamp() }
+      );
+    } catch (error) {
+      console.error('Save failed:', error);
+    }
+  };
+
+  const handleStartConversation = async (mentorId: string, mentorName: string, mentorPhoto: string) => {
+    if (!currentUser) return;
+
+    try {
+      // Check if conversation already exists
+      const q = query(
+        collection(db, 'conversations'),
+        where('participants', 'array-contains', currentUser.uid)
+      );
+
+      const snap = await getDocs(q);
+      let existingConv = snap.docs.find(doc => doc.data().participants.includes(mentorId));
+
+      if (existingConv) {
+        setSelectedChat({
+          id: existingConv.id,
+          name: mentorName,
+          photo: mentorPhoto,
+          role: 'mentor'
+        });
+        setStudentViewStack(['chat']);
+      } else {
+        // Create new conversation
+        const newConv = await addDoc(collection(db, 'conversations'), {
+          participants: [currentUser.uid, mentorId],
+          participantDetails: {
+            [currentUser.uid]: {
+              name: currentUser.displayName || 'Student',
+              photo: currentUser.photoURL || '',
+              role: 'student'
+            },
+            [mentorId]: {
+              name: mentorName,
+              photo: mentorPhoto,
+              role: 'mentor'
+            }
+          },
+          lastMessage: '',
+          lastMessageAt: serverTimestamp(),
+          createdAt: serverTimestamp()
+        });
+
+        setSelectedChat({
+          id: newConv.id,
+          name: mentorName,
+          photo: mentorPhoto,
+          role: 'mentor'
+        });
+        setStudentViewStack(['chat']);
+      }
+    } catch (error) {
+      console.error("Error starting conversation:", error);
+    }
+  };
+
+  const handleSendMessage = async (text: string) => {
+    if (!currentUser || !selectedChat || !text.trim()) return;
+
+    try {
+      const messageData = {
+        text: text.trim(),
+        senderId: currentUser.uid,
+        createdAt: serverTimestamp(),
+        read: false
+      };
+
+      await addDoc(collection(db, 'conversations', selectedChat.id, 'messages'), messageData);
+
+      await updateDoc(doc(db, 'conversations', selectedChat.id), {
+        lastMessage: text.trim(),
+        lastMessageAt: serverTimestamp()
+      });
+    } catch (error) {
+      console.error("Error sending message:", error);
+    }
+  };
+
   const handleGoogleLogin = async () => {
     setIsAuthLoading(true);
     setAuthError(null);
@@ -1835,6 +2058,7 @@ export default function App() {
     const email = formData.get('email') as string;
     const password = formData.get('password') as string;
     const phone = formData.get('phone') as string;
+    const birthday = formData.get('birthday') as string;
 
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
@@ -1845,6 +2069,8 @@ export default function App() {
           uid: user.uid,
           name,
           email: user.email,
+          phone,
+          birthday,
           role: 'mentor',
           createdAt: serverTimestamp()
         });
@@ -1853,6 +2079,8 @@ export default function App() {
           uid: user.uid,
           name,
           email: user.email,
+          phone,
+          birthday,
           role: 'mentor',
           tagline: '',
           about: '',
@@ -1880,6 +2108,8 @@ export default function App() {
           uid: user.uid,
           name,
           email: user.email,
+          phone,
+          birthday,
           role: 'student',
           createdAt: serverTimestamp()
         });
@@ -1888,6 +2118,8 @@ export default function App() {
           uid: user.uid,
           name,
           email: user.email,
+          phone,
+          birthday,
           role: 'student',
           instrument: '',
           stage: 'Stage 1 — Foundation',
@@ -2157,6 +2389,8 @@ export default function App() {
     }
   };
   const [userRole, setUserRole] = useState<'student' | 'mentor' | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [password, setPassword] = useState('');
   const [splashIndex, setSplashIndex] = useState(0);
   const profileProgress = calculateProfileProgress(mentorProfile);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
@@ -2230,8 +2464,6 @@ export default function App() {
   const [selectedMentor, setSelectedMentor] = useState<MentorDetail | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [cultureTab, setCultureTab] = useState<'Malay' | 'Indian' | 'Chinese' | 'Borneo'>('Malay');
-  const [selectedChat, setSelectedChat] = useState<any | null>(null);
-  const [chatMessages, setChatMessages] = useState<any[]>([]);
 
   // Log Session States (Moved to top level to fix Rules of Hooks)
   const [sessionRating, setSessionRating] = useState(0);
@@ -2339,6 +2571,34 @@ export default function App() {
               {!forcedDark && <ThemeToggle />}
             </div>
           </div>
+
+          {/* Continue Learning Card */}
+          {studentActiveLesson && (
+            <div className={`mb-5 p-4 rounded-3xl border ${dark ? 'border-white/10 bg-white/5' : 'border-zinc-100 bg-white shadow-sm'}`}>
+              <p className={`text-[9px] uppercase tracking-widest font-bold mb-2 ${dark ? 'text-white/30' : 'text-zinc-400'}`}>Continue Learning</p>
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <p className={`text-sm font-bold ${dark ? 'text-white' : 'text-zinc-900'}`}>
+                    {studentActiveLesson.instrument}
+                  </p>
+                  <p className={`text-xs ${dark ? 'text-white/40' : 'text-zinc-500'}`}>
+                    with {studentActiveLesson.mentorName}
+                  </p>
+                  <p className={`text-xs mt-1 ${dark ? 'text-white/40' : 'text-zinc-400'}`}>
+                    {studentActiveLesson.status === 'pending' 
+                      ? '⏳ Awaiting confirmation' 
+                      : `📅 ${studentActiveLesson.date} at ${studentActiveLesson.time}`}
+                  </p>
+                </div>
+                <button 
+                  onClick={() => switchStudentTab('journey')}
+                  className={`px-4 py-2 text-xs font-bold rounded-full ${dark ? 'bg-white text-black' : 'bg-zinc-900 text-white'}`}
+                >
+                  View →
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* New Student Onboarding */}
           {isNewUser && isStudent && (
@@ -3076,6 +3336,16 @@ export default function App() {
 
         {/* Sticky Bottom */}
         <div className={`fixed bottom-0 left-0 right-0 p-5 backdrop-blur-xl border-t flex items-center gap-4 z-[110] ${dark ? 'bg-black/80 border-white/10' : 'bg-white/80 border-black/5'}`}>
+          {isStudent && (
+            <button 
+              onClick={() => {
+                handleStartConversation(selectedMentor.id, selectedMentor.name, selectedMentor.photo);
+              }}
+              className={`w-14 h-14 rounded-full flex items-center justify-center border transition-all ${dark ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-white border-zinc-200 text-zinc-900 shadow-sm hover:bg-zinc-50'}`}
+            >
+              <MessageSquare size={20} />
+            </button>
+          )}
 
           <button 
             onClick={() => {
@@ -3102,13 +3372,68 @@ export default function App() {
   const StudentJourneyView = ({ forcedDark }: { forcedDark?: boolean }) => {
     const dark = forcedDark ?? isDark;
     
+    if (studentLessons.length === 0) return (
+      <div className={`flex flex-col items-center justify-center h-full gap-4 text-center px-8 pt-20 ${dark ? 'bg-black text-white' : 'bg-[#F9F9F9] text-zinc-900'}`}>
+        <div className={`w-20 h-20 rounded-full flex items-center justify-center ${dark ? 'bg-white/5' : 'bg-black/5'}`}>
+          <Music2 size={32} className={dark ? 'text-white/20' : 'text-zinc-300'} />
+        </div>
+        <h2 className={`text-xl font-bold ${dark ? 'text-white' : 'text-zinc-900'}`}>
+          Your journey starts here
+        </h2>
+        <p className={`text-sm leading-relaxed ${dark ? 'text-white/40' : 'text-zinc-400'}`}>
+          Find a mentor and book your free trial to begin your musical journey
+        </p>
+        <button 
+          onClick={() => switchStudentTab('home')}
+          className={`px-6 py-3 text-xs font-bold rounded-full ${dark ? 'bg-white text-black' : 'bg-zinc-900 text-white'}`}
+        >
+          Explore Mentors →
+        </button>
+      </div>
+    );
+
+    if (studentLessons.length > 0 && studentLogs.length === 0) {
+      const latest = studentLessons[0];
+      return (
+        <div className={`min-h-full px-5 pt-8 ${dark ? 'bg-black text-white' : 'bg-[#F9F9F9] text-zinc-900'}`}>
+          <h1 className={`text-3xl font-bold mb-6 ${dark ? 'text-white' : 'text-zinc-900'}`}>My Journey</h1>
+          <div className={`p-5 rounded-3xl border ${dark ? 'border-white/10 bg-white/5' : 'border-zinc-100 bg-white shadow-sm'}`}>
+            <div className="flex items-center gap-2 mb-2">
+              {latest.status === 'pending' 
+                ? <Clock size={16} className="text-amber-500" />
+                : <CheckCircle2 size={16} className="text-green-500" />
+              }
+              <p className={`text-xs font-bold uppercase tracking-widest ${dark ? 'text-white/30' : 'text-zinc-400'}`}>
+                {latest.status === 'pending' 
+                  ? 'Trial Pending' 
+                  : 'Trial Confirmed'}
+              </p>
+            </div>
+            <h3 className={`text-lg font-bold ${dark ? 'text-white' : 'text-zinc-900'}`}>
+              {latest.instrument}
+            </h3>
+            <p className={`text-sm ${dark ? 'text-white/40' : 'text-zinc-500'}`}>
+              with {latest.mentorName}
+            </p>
+            <p className={`text-sm mt-1 ${dark ? 'text-white/30' : 'text-zinc-400'}`}>
+              {latest.date} at {latest.time}
+            </p>
+            {latest.status === 'pending' && (
+              <p className="text-xs text-amber-500 mt-3">
+                Waiting for mentor confirmation...
+              </p>
+            )}
+          </div>
+        </div>
+      );
+    }
+
     // Use the dynamic user profile
     const currentStudent = userProfile || MOCK_STUDENTS[0];
-    const mentor = MOCK_MENTORS[0]; // Cikgu Aris
+    const mentor = realMentors.find(m => m.id === studentLessons[0]?.mentorId) || MOCK_MENTORS[0];
 
-    const upcomingLesson = lessons.find(l => l.status === 'confirmed' && new Date(l.date) >= new Date());
-    const pastLessonsData = lessons.filter(l => l.status === 'confirmed' && new Date(l.date) < new Date());
-
+    const upcomingLesson = studentLessons.find(l => l.status === 'confirmed' && new Date(l.date) >= new Date());
+    
     const instruments = [
       { id: 'gambus', name: 'Gambus', icon: Music2 },
       { id: 'tabla', name: 'Tabla', icon: Music },
@@ -3120,20 +3445,17 @@ export default function App() {
 
     const stats = {
       status: 'On Track',
-      id: '#8821'
+      id: `#${currentUser?.uid.slice(0, 4)}`
     };
 
-    // Filter logs for the current student and instrument
-    const studentLogs = realSessionLogs.filter(log => log.studentId === currentStudent.id);
-    
     // Map logs to a more detailed format for the UI
     const pastLessons = studentLogs.map((log, index) => ({
       id: log.lessonNumber,
       date: new Date(log.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
       review: log.covered,
       focus: log.focus,
-      milestones: log.milestones.map(mId => currentStudent.learningPath?.find(m => m.id === mId)?.title || mId),
-      encouragement: index === 0 ? "Excellent progress on the syncopated rhythms. Your striking technique is becoming much more consistent." : "Solid progress today.",
+      milestones: log.milestones || [],
+      encouragement: "Solid progress today.",
       isLatest: index === 0
     })).sort((a, b) => b.id - a.id);
 
@@ -3500,30 +3822,13 @@ export default function App() {
       if (scrollRef.current) {
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
       }
-    }, [chatMessages]);
+    }, [messages]);
 
-    const handleSend = () => {
+    const handleSend = async () => {
       if (!chatNewMessage.trim()) return;
-      const msg = {
-        id: Date.now(),
-        text: chatNewMessage,
-        sender: 'me',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      };
-      setChatMessages([...chatMessages, msg]);
-      setChatNewMessage('');
-
-      // Simulate reply
-      setTimeout(() => {
-        const reply = {
-          id: Date.now() + 1,
-          text: "Thanks for the message! I'll get back to you soon.",
-          sender: 'them',
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        };
-        setChatMessages(prev => [...prev, reply]);
-        triggerNotification('message', 'New Message', `New message from ${recipient.name}: "${reply.text}"`);
-      }, 1000);
+      const text = chatNewMessage;
+      setChatNewMessage(''); // Clear input immediately
+      await handleSendMessage(text);
     };
 
     return (
@@ -3544,17 +3849,19 @@ export default function App() {
         </div>
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-5 space-y-4">
-          {chatMessages.length === 0 && (
+          {messages.length === 0 && (
             <div className="h-full flex flex-col items-center justify-center opacity-20 text-center px-10">
               <MessageSquare size={48} className="mb-4" />
               <p className="text-xs">Start a conversation with {recipient.name}</p>
             </div>
           )}
-          {chatMessages.map((msg) => (
-            <div key={msg.id} className={`flex ${msg.sender === 'me' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[80%] p-4 rounded-2xl text-xs ${msg.sender === 'me' ? (dark ? 'bg-harbour-500 text-white rounded-tr-none' : 'bg-zinc-900 text-white rounded-tr-none') : (dark ? 'bg-white/10 text-white rounded-tl-none' : 'bg-zinc-100 text-zinc-900 rounded-tl-none')}`}>
+          {messages.map((msg) => (
+            <div key={msg.id} className={`flex ${msg.senderId === currentUser?.uid ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[80%] p-4 rounded-2xl text-xs ${msg.senderId === currentUser?.uid ? (dark ? 'bg-harbour-500 text-white rounded-tr-none' : 'bg-zinc-900 text-white rounded-tr-none') : (dark ? 'bg-white/10 text-white rounded-tl-none' : 'bg-zinc-100 text-zinc-900 rounded-tl-none')}`}>
                 <p>{msg.text}</p>
-                <p className={`text-[8px] mt-1 opacity-50 ${msg.sender === 'me' ? 'text-right' : 'text-left'}`}>{msg.timestamp}</p>
+                <p className={`text-[8px] mt-1 opacity-50 ${msg.senderId === currentUser?.uid ? 'text-right' : 'text-left'}`}>
+                  {msg.createdAt?.toDate ? msg.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Sending...'}
+                </p>
               </div>
             </div>
           ))}
@@ -3584,14 +3891,6 @@ export default function App() {
   const StudentMessagesView = ({ forcedDark }: { forcedDark?: boolean }) => {
     const dark = forcedDark ?? isDark;
     
-    // Use real mentors for messages
-    const messageMentors = realMentors.slice(0, 3);
-    const lastMessages = [
-      "Looking forward to our session on Friday!",
-      "Did you manage to practice the new rhythm?",
-      "I've uploaded the new materials for you."
-    ];
-
     if (selectedChat) {
       return <ChatConversation recipient={selectedChat} onBack={() => setSelectedChat(null)} dark={dark} />;
     }
@@ -3607,37 +3906,48 @@ export default function App() {
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 space-y-3">
-          {messageMentors.length === 0 ? (
+          {conversations.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full gap-2 opacity-30">
               <MessageSquare size={40} />
               <p className="text-xs font-bold uppercase tracking-widest">No conversations yet</p>
             </div>
           ) : (
-            messageMentors.map((mentor, i) => (
-              <div 
-                key={mentor.id} 
-                onClick={() => setSelectedChat(mentor)}
-                className={`p-4 rounded-3xl border transition-all cursor-pointer ${dark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-100 shadow-sm hover:border-zinc-200'}`}
-              >
-                <div className="flex items-center gap-4">
-                  <div className="relative">
-                    <img src={mentor.photo} className="w-12 h-12 rounded-2xl object-cover" referrerPolicy="no-referrer" />
-                    {i === 0 && <div className={`absolute -top-1 -right-1 w-3.5 h-3.5 bg-harbour-500 rounded-full border-2 ${dark ? 'border-black' : 'border-white'}`} />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-start mb-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-bold truncate">{mentor.name}</h3>
-                        <span className="px-1.5 py-0.5 bg-harbour-500/10 text-harbour-400 text-[7px] font-bold rounded uppercase tracking-widest">Mentor</span>
-                      </div>
-                      <span className={`text-[8px] font-mono ${dark ? 'text-white/30' : 'text-zinc-400'}`}>10:45 AM</span>
+            conversations.map((conv) => {
+              const otherParticipantId = conv.participants.find((p: string) => p !== currentUser?.uid);
+              const details = conv.participantDetails[otherParticipantId];
+              
+              return (
+                <div 
+                  key={conv.id} 
+                  onClick={() => setSelectedChat({
+                    id: conv.id,
+                    name: details.name,
+                    photo: details.photo,
+                    role: details.role
+                  })}
+                  className={`p-4 rounded-3xl border transition-all cursor-pointer ${dark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-100 shadow-sm hover:border-zinc-200'}`}
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="relative">
+                      <img src={details.photo} className="w-12 h-12 rounded-2xl object-cover" referrerPolicy="no-referrer" />
                     </div>
-                    <p className="text-[9px] text-harbour-400 uppercase tracking-widest mb-1">{mentor.specialisation[0]}</p>
-                    <p className={`text-[11px] truncate ${dark ? 'text-white/40' : 'text-zinc-500'}`}>{lastMessages[i]}</p>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-start mb-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-sm font-bold truncate">{details.name}</h3>
+                          <span className="px-1.5 py-0.5 bg-harbour-500/10 text-harbour-400 text-[7px] font-bold rounded uppercase tracking-widest">{details.role}</span>
+                        </div>
+                        <span className={`text-[8px] font-mono ${dark ? 'text-white/30' : 'text-zinc-400'}`}>
+                          {conv.lastMessageAt?.toDate ? conv.lastMessageAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                        </span>
+                      </div>
+                      <p className={`text-[11px] truncate ${dark ? 'text-white/40' : 'text-zinc-500'}`}>{conv.lastMessage || 'No messages yet'}</p>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )))}
+              );
+            })
+          )}
         </div>
       </div>
     );
@@ -3645,19 +3955,42 @@ export default function App() {
 
   const StudentProfileView = () => {
     // Use the dynamic user profile
-    const profile = userProfile || {
-      name: 'New Student',
-      email: currentUser?.email || 'student@example.com',
-      instrument: 'Sape',
-      stage: 'Beginner',
-      photo: "https://picsum.photos/seed/student/400"
+    const profile = studentProfile;
+    const [isEditing, setIsEditing] = useState(false);
+    const [editData, setEditData] = useState(profile);
+
+    useEffect(() => {
+      setEditData(profile);
+    }, [profile]);
+
+    const handleSave = async () => {
+      await saveStudentProfile(editData);
+      setIsEditing(false);
     };
 
-    // Filter transactions for this student
-    const studentTransactions = MOCK_TRANSACTIONS.filter(t => t.studentId === currentUser?.uid);
+    const handlePhotoUpload = () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = (e: any) => {
+        const file = e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (readerEvent) => {
+            const base64 = readerEvent.target?.result as string;
+            setEditData({ ...editData, photo: base64 });
+            if (!isEditing) {
+              saveStudentProfile({ photo: base64 });
+            }
+          };
+          reader.readAsDataURL(file);
+        }
+      };
+      input.click();
+    };
 
     const learningInstruments = [
-      { name: profile.instrument, icon: Music, level: profile.stage },
+      { name: profile.instrument || 'Not set', icon: Music, level: profile.stage || 'Beginner' },
     ];
 
     return (
@@ -3670,21 +4003,39 @@ export default function App() {
             <div className="relative mb-6">
               <div className="w-24 h-24 rounded-[2rem] overflow-hidden border-4 border-white/10 shadow-2xl">
                 <img 
-                  src={profile.photo || "https://picsum.photos/seed/student/400"} 
+                  src={editData.photo || "https://picsum.photos/seed/student/400"} 
                   className="w-full h-full object-cover" 
                   referrerPolicy="no-referrer" 
                   alt="Profile"
                 />
               </div>
-              <button className="absolute -bottom-1 -right-1 w-8 h-8 bg-white text-zinc-900 rounded-xl flex items-center justify-center shadow-xl">
+              <button 
+                onClick={handlePhotoUpload}
+                className="absolute -bottom-1 -right-1 w-8 h-8 bg-white text-zinc-900 rounded-xl flex items-center justify-center shadow-xl"
+              >
                 <Camera size={14} />
               </button>
             </div>
 
             <div className="space-y-1">
-              <h1 className="text-2xl font-serif-sturdy tracking-tight">{profile.name}</h1>
+              {isEditing ? (
+                <input 
+                  value={editData.name}
+                  onChange={(e) => setEditData({ ...editData, name: e.target.value })}
+                  className="text-2xl font-serif-sturdy tracking-tight bg-transparent border-b border-white/20 text-center focus:outline-none focus:border-white"
+                />
+              ) : (
+                <h1 className="text-2xl font-serif-sturdy tracking-tight">{profile.name}</h1>
+              )}
               <p className="text-[10px] text-white/40 font-medium tracking-widest uppercase">{profile.email}</p>
             </div>
+
+            <button 
+              onClick={() => isEditing ? handleSave() : setIsEditing(true)}
+              className="mt-6 px-6 py-2 bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold uppercase tracking-widest rounded-full border border-white/10 transition-all"
+            >
+              {isEditing ? 'Save Changes' : 'Edit Profile'}
+            </button>
           </div>
         </header>
 
@@ -3697,20 +4048,17 @@ export default function App() {
               <div className="mb-6">
                 <div className="flex items-center justify-between mb-2">
                   <p className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-white/20' : 'text-zinc-400'}`}>Short Bio</p>
-                  <button onClick={() => setIsEditingStudentBio(!isEditingStudentBio)} className={`text-harbour-500 hover:text-harbour-400 transition-colors`}>
-                    {isEditingStudentBio ? <Check size={16} /> : <Edit2 size={14} />}
-                  </button>
                 </div>
-                {isEditingStudentBio ? (
+                {isEditing ? (
                   <textarea 
-                    value={studentBio}
-                    onChange={(e) => setStudentBio(e.target.value)}
+                    value={editData.aboutMe}
+                    onChange={(e) => setEditData({ ...editData, aboutMe: e.target.value })}
                     className={`w-full bg-transparent text-sm leading-relaxed border-b border-harbour-500/50 focus:border-harbour-500 outline-none pb-2 ${isDark ? 'text-white' : 'text-zinc-900'}`}
-                    autoFocus
+                    rows={3}
                   />
                 ) : (
-                  <p className={`text-sm leading-relaxed ${isDark ? 'text-white/70' : 'text-zinc-600'}`} onClick={() => setIsEditingStudentBio(true)}>
-                    {studentBio}
+                  <p className={`text-sm leading-relaxed ${isDark ? 'text-white/70' : 'text-zinc-600'}`}>
+                    {profile.aboutMe || "Traditional music enthusiast learning the strings of Malaysia."}
                   </p>
                 )}
               </div>
@@ -3742,7 +4090,15 @@ export default function App() {
                   </div>
                   <div>
                     <p className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-white/20' : 'text-zinc-400'}`}>Name</p>
-                    <p className={`text-sm font-bold ${isDark ? 'text-white' : 'text-zinc-900'}`}>{currentUser.name}</p>
+                    {isEditing ? (
+                      <input 
+                        value={editData.name}
+                        onChange={(e) => setEditData({ ...editData, name: e.target.value })}
+                        className={`text-sm font-bold bg-transparent border-b border-harbour-500/30 focus:outline-none focus:border-harbour-500 ${isDark ? 'text-white' : 'text-zinc-900'}`}
+                      />
+                    ) : (
+                      <p className={`text-sm font-bold ${isDark ? 'text-white' : 'text-zinc-900'}`}>{profile.name}</p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -3753,10 +4109,31 @@ export default function App() {
                   </div>
                   <div>
                     <p className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-white/20' : 'text-zinc-400'}`}>Email</p>
-                    <p className={`text-sm font-bold ${isDark ? 'text-white' : 'text-zinc-900'}`}>{currentUser.email}</p>
+                    <p className={`text-sm font-bold ${isDark ? 'text-white' : 'text-zinc-900'}`}>{profile.email}</p>
                   </div>
                 </div>
               </div>
+              <div className={`p-4 flex items-center justify-between border-b ${isDark ? 'border-white/5' : 'border-zinc-50'}`}>
+                <div className="flex items-center gap-4">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isDark ? 'bg-white/5 text-white/40' : 'bg-zinc-50 text-zinc-400'}`}>
+                    <Calendar size={18} />
+                  </div>
+                  <div>
+                    <p className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-white/20' : 'text-zinc-400'}`}>Date of Birth</p>
+                    {isEditing ? (
+                      <input 
+                        type="date"
+                        value={editData.birthday}
+                        onChange={(e) => setEditData({ ...editData, birthday: e.target.value })}
+                        className={`text-sm font-bold bg-transparent border-b border-harbour-500/30 focus:outline-none focus:border-harbour-500 ${isDark ? 'text-white' : 'text-zinc-900'}`}
+                      />
+                    ) : (
+                      <p className={`text-sm font-bold ${isDark ? 'text-white' : 'text-zinc-900'}`}>{profile.birthday || 'Not set'}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <button className="w-full p-4 flex items-center justify-between hover:bg-white/5 transition-colors">
                 <div className="flex items-center gap-4">
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isDark ? 'bg-white/5 text-white/40' : 'bg-zinc-50 text-zinc-400'}`}>
@@ -4138,112 +4515,219 @@ export default function App() {
 
     const RoleSelectionView = () => (
       <div className={`min-h-screen p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
-        <button onClick={() => { setAuthView('splash'); setAuthError(null); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center mb-12">
-          <ChevronLeft size={20} />
-        </button>
+        {/* Step Indicator */}
+        <div className="flex items-center justify-between mb-8">
+          <button onClick={() => { setAuthView('splash'); setAuthError(null); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
+            <ChevronLeft size={20} />
+          </button>
+          <div className="flex flex-col items-end">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Step 1 of 2</span>
+            <div className="flex gap-1 mt-1">
+              <div className="w-6 h-1 rounded-full bg-harbour-500" />
+              <div className="w-6 h-1 rounded-full bg-zinc-200" />
+            </div>
+          </div>
+        </div>
 
-        <div className="mb-12">
+        <div className="mb-10">
           <h2 className="text-3xl font-serif-sturdy mb-2">I want to join as...</h2>
           <p className="text-zinc-500 text-sm">Choose your path in the musical journey.</p>
         </div>
 
         <div className="space-y-4 flex-1">
           <button 
-            onClick={() => { setUserRole('student'); setAuthView('student-registration'); setAuthError(null); }}
-            className={`w-full p-8 rounded-[2.5rem] border-2 text-left transition-all group ${isDark ? 'bg-zinc-900 border-white/5 hover:border-harbour-500' : 'bg-white border-zinc-100 hover:border-harbour-500 shadow-sm'}`}
+            onClick={() => setUserRole('student')}
+            className={`w-full p-6 rounded-[2rem] border-2 text-left transition-all relative group ${userRole === 'student' ? 'border-harbour-500 bg-harbour-50/5' : isDark ? 'bg-zinc-900 border-white/5' : 'bg-white border-zinc-100 shadow-sm'}`}
           >
-            <div className="w-14 h-14 bg-harbour-100 text-harbour-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-              <Users size={28} />
+            <div className="flex items-start gap-4">
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-transform ${userRole === 'student' ? 'bg-harbour-500 text-white' : 'bg-harbour-100 text-harbour-600'}`}>
+                <Users size={24} />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-bold mb-1">Student</h3>
+                <p className="text-zinc-500 text-xs leading-relaxed">Learn traditional instruments from verified masters.</p>
+              </div>
+              {userRole === 'student' && (
+                <div className="w-6 h-6 bg-harbour-500 rounded-full flex items-center justify-center text-white">
+                  <Check size={14} />
+                </div>
+              )}
             </div>
-            <h3 className="text-xl font-bold mb-2">Student</h3>
-            <p className="text-zinc-500 text-sm leading-relaxed">Learn traditional instruments from verified masters and track your progress.</p>
           </button>
 
           <button 
-            onClick={() => { setUserRole('mentor'); setAuthView('mentor-registration'); setAuthError(null); }}
-            className={`w-full p-8 rounded-[2.5rem] border-2 text-left transition-all group ${isDark ? 'bg-zinc-900 border-white/5 hover:border-walnut-500' : 'bg-white border-zinc-100 hover:border-walnut-500 shadow-sm'}`}
+            onClick={() => setUserRole('mentor')}
+            className={`w-full p-6 rounded-[2rem] border-2 text-left transition-all relative group ${userRole === 'mentor' ? 'border-walnut-500 bg-walnut-50/5' : isDark ? 'bg-zinc-900 border-white/5' : 'bg-white border-zinc-100 shadow-sm'}`}
           >
-            <div className="w-14 h-14 bg-walnut-100 text-walnut-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-              <User size={28} />
+            <div className="flex items-start gap-4">
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-transform ${userRole === 'mentor' ? 'bg-walnut-500 text-white' : 'bg-walnut-100 text-walnut-600'}`}>
+                <User size={24} />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-bold mb-1">Mentor</h3>
+                <p className="text-zinc-500 text-xs leading-relaxed">Share your expertise and preserve our musical heritage.</p>
+              </div>
+              {userRole === 'mentor' && (
+                <div className="w-6 h-6 bg-walnut-500 rounded-full flex items-center justify-center text-white">
+                  <Check size={14} />
+                </div>
+              )}
             </div>
-            <h3 className="text-xl font-bold mb-2">Mentor</h3>
-            <p className="text-zinc-500 text-sm leading-relaxed">Share your expertise, manage students, and preserve our musical heritage.</p>
           </button>
         </div>
-      </div>
-    );
 
-    const RegistrationView = ({ role }: { role: 'student' | 'mentor' }) => (
-      <div className={`min-h-screen p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
-        <button onClick={() => { setAuthView('role-selection'); setAuthError(null); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center mb-12">
-          <ChevronLeft size={20} />
+        <button 
+          onClick={() => {
+            if (userRole === 'student') setAuthView('student-registration');
+            else if (userRole === 'mentor') setAuthView('mentor-registration');
+            setAuthError(null);
+          }}
+          disabled={!userRole}
+          className={`w-full py-5 rounded-[2rem] font-bold text-sm uppercase tracking-widest transition-all mt-8 ${userRole ? 'bg-zinc-900 text-white shadow-xl' : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'}`}
+        >
+          Continue
         </button>
-
-        <div className="mb-10">
-          <h2 className="text-3xl font-serif-sturdy mb-2">{role === 'student' ? 'Student Registration' : 'Mentor Registration'}</h2>
-          <p className="text-zinc-500 text-sm">Join the Maestro community today.</p>
-        </div>
-
-        <AuthError message={authError} />
-
-        <form className="space-y-5" onSubmit={(e) => handleEmailRegister(e, role)}>
-          <div className="space-y-2">
-            <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-400">Full Name</label>
-            <input name="name" type="text" className={`w-full border rounded-2xl px-6 py-4 focus:outline-none ${isDark ? 'bg-white/5 border-white/10 focus:border-harbour-500' : 'bg-white border-zinc-200 focus:border-harbour-500'}`} placeholder="Julian Vane" required />
-          </div>
-          <div className="space-y-2">
-            <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-400">Email Address</label>
-            <input name="email" type="email" className={`w-full border rounded-2xl px-6 py-4 focus:outline-none ${isDark ? 'bg-white/5 border-white/10 focus:border-harbour-500' : 'bg-white border-zinc-200 focus:border-harbour-500'}`} placeholder="julian@example.com" required />
-          </div>
-          <div className="space-y-2">
-            <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-400">Password</label>
-            <input name="password" type="password" className={`w-full border rounded-2xl px-6 py-4 focus:outline-none ${isDark ? 'bg-white/5 border-white/10 focus:border-harbour-500' : 'bg-white border-zinc-200 focus:border-harbour-500'}`} placeholder="••••••••" required />
-          </div>
-          <div className="space-y-2">
-            <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-400">Phone Number</label>
-            <input name="phone" type="tel" className={`w-full border rounded-2xl px-6 py-4 focus:outline-none ${isDark ? 'bg-white/5 border-white/10 focus:border-harbour-500' : 'bg-white border-zinc-200 focus:border-harbour-500'}`} placeholder="+60 12 345 6789" required />
-          </div>
-
-          <button 
-            type="submit" 
-            disabled={isAuthLoading}
-            className={`w-full font-bold py-5 rounded-[2rem] mt-4 shadow-xl transition-all flex items-center justify-center gap-2 ${role === 'student' ? 'bg-harbour-500 text-white' : 'bg-zinc-900 text-white'} ${isAuthLoading ? 'opacity-70 scale-[0.98]' : 'hover:scale-[1.02]'}`}
-          >
-            {isAuthLoading ? (
-              <>
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Creating Account...
-              </>
-            ) : (
-              role === 'student' ? 'Create Account' : 'Register'
-            )}
-          </button>
-
-          <div className="relative py-4">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-zinc-200"></div>
-            </div>
-            <div className="relative flex justify-center text-[10px] uppercase tracking-widest font-bold">
-              <span className={`px-4 ${isDark ? 'bg-black text-zinc-500' : 'bg-zinc-50 text-zinc-400'}`}>Or</span>
-            </div>
-          </div>
-
-          <button 
-            type="button"
-            onClick={handleGoogleLogin}
-            className={`w-full border font-bold py-5 rounded-[2rem] flex items-center justify-center gap-3 transition-all ${isDark ? 'bg-white/5 border-white/10 text-white' : 'bg-white border-zinc-200 text-zinc-900 shadow-sm'}`}
-          >
-            <img src="https://www.google.com/favicon.ico" className="w-5 h-5" />
-            Continue with Google
-          </button>
-        </form>
       </div>
     );
+
+    const RegistrationView = ({ role }: { role: 'student' | 'mentor' }) => {
+      const getPasswordStrength = (pass: string) => {
+        if (!pass) return 0;
+        let strength = 0;
+        if (pass.length >= 8) strength += 25;
+        if (/[A-Z]/.test(pass)) strength += 25;
+        if (/[0-9]/.test(pass)) strength += 25;
+        if (/[^A-Za-z0-9]/.test(pass)) strength += 25;
+        return strength;
+      };
+
+      const strength = getPasswordStrength(password);
+      const strengthColor = strength <= 25 ? 'bg-red-500' : strength <= 50 ? 'bg-orange-500' : strength <= 75 ? 'bg-yellow-500' : 'bg-emerald-500';
+
+      return (
+        <div className={`h-screen flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
+          {/* Header */}
+          <div className="p-8 pb-4 flex items-center justify-between">
+            <button onClick={() => { setAuthView('role-selection'); setAuthError(null); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
+              <ChevronLeft size={20} />
+            </button>
+            <div className="flex flex-col items-end">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Step 2 of 2</span>
+              <div className="flex gap-1 mt-1">
+                <div className="w-6 h-1 rounded-full bg-harbour-500" />
+                <div className="w-6 h-1 rounded-full bg-harbour-500" />
+              </div>
+            </div>
+          </div>
+
+          {/* Scrollable Content */}
+          <div className="flex-1 overflow-y-auto px-8 pb-8">
+            <div className="mb-8">
+              <h2 className="text-3xl font-serif-sturdy mb-2">{role === 'student' ? 'Create Student Account' : 'Join as Mentor'}</h2>
+              <p className="text-zinc-500 text-sm">Fill in your details to get started.</p>
+            </div>
+
+            <AuthError message={authError} />
+
+            <form className="space-y-5" onSubmit={(e) => handleEmailRegister(e, role)}>
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-400">Full Name</label>
+                <input name="name" type="text" className={`w-full border rounded-2xl px-6 py-4 focus:outline-none ${isDark ? 'bg-white/5 border-white/10 focus:border-harbour-500' : 'bg-white border-zinc-200 focus:border-harbour-500'}`} placeholder="Julian Vane" required />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-400">Email Address</label>
+                <input name="email" type="email" className={`w-full border rounded-2xl px-6 py-4 focus:outline-none ${isDark ? 'bg-white/5 border-white/10 focus:border-harbour-500' : 'bg-white border-zinc-200 focus:border-harbour-500'}`} placeholder="julian@example.com" required />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-400">Phone Number</label>
+                <input name="phone" type="tel" className={`w-full border rounded-2xl px-6 py-4 focus:outline-none ${isDark ? 'bg-white/5 border-white/10 focus:border-harbour-500' : 'bg-white border-zinc-200 focus:border-harbour-500'}`} placeholder="+60 12 345 6789" required />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-400">Date of Birth</label>
+                <input name="birthday" type="date" className={`w-full border rounded-2xl px-6 py-4 focus:outline-none ${isDark ? 'bg-white/5 border-white/10 focus:border-harbour-500' : 'bg-white border-zinc-200 focus:border-harbour-500'}`} required />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-400">Password</label>
+                <div className="relative">
+                  <input 
+                    name="password" 
+                    type={showPassword ? "text" : "password"} 
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className={`w-full border rounded-2xl px-6 py-4 pr-14 focus:outline-none ${isDark ? 'bg-white/5 border-white/10 focus:border-harbour-500' : 'bg-white border-zinc-200 focus:border-harbour-500'}`} 
+                    placeholder="••••••••" 
+                    required 
+                  />
+                  <button 
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600"
+                  >
+                    {showPassword ? <Lock size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+                {/* Strength Bar */}
+                <div className="h-1 w-full bg-zinc-200 rounded-full overflow-hidden mt-2">
+                  <motion.div 
+                    initial={{ width: 0 }}
+                    animate={{ width: `${strength}%` }}
+                    className={`h-full ${strengthColor} transition-all`}
+                  />
+                </div>
+              </div>
+
+              <button 
+                type="submit" 
+                disabled={isAuthLoading}
+                className={`w-full font-bold py-5 rounded-[2rem] mt-4 shadow-xl transition-all flex items-center justify-center gap-2 ${role === 'student' ? 'bg-harbour-500 text-white' : 'bg-zinc-900 text-white'} ${isAuthLoading ? 'opacity-70 scale-[0.98]' : 'hover:scale-[1.02]'}`}
+              >
+                {isAuthLoading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Creating Account...
+                  </>
+                ) : (
+                  'Create Account'
+                )}
+              </button>
+
+              <div className="relative py-4">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-zinc-200"></div>
+                </div>
+                <div className="relative flex justify-center text-[10px] uppercase tracking-widest font-bold">
+                  <span className={`px-4 ${isDark ? 'bg-black text-zinc-500' : 'bg-zinc-50 text-zinc-400'}`}>Or</span>
+                </div>
+              </div>
+
+              <button 
+                type="button"
+                onClick={handleGoogleLogin}
+                className={`w-full border font-bold py-5 rounded-[2rem] flex items-center justify-center gap-3 transition-all ${isDark ? 'bg-white/5 border-white/10 text-white' : 'bg-white border-zinc-200 text-zinc-900 shadow-sm'}`}
+              >
+                <img src="https://www.google.com/favicon.ico" className="w-5 h-5" />
+                Continue with Google
+              </button>
+
+              <div className="text-center pt-4">
+                <button 
+                  type="button"
+                  onClick={() => setAuthView('sign-in')}
+                  className="text-xs font-bold text-zinc-500 hover:text-zinc-900"
+                >
+                  Already have an account? <span className="text-harbour-600">Sign in</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      );
+    };
 
     const SignInView = () => {
       return (
         <div className={`min-h-screen p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
-          <button onClick={() => { setAuthView('splash'); setAuthError(null); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center mb-12">
+          <button onClick={() => { setAuthView('splash'); setAuthError(null); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center mb-8">
             <ChevronLeft size={20} />
           </button>
 
@@ -4255,16 +4739,16 @@ export default function App() {
           <AuthError message={authError} />
 
           {/* Role Tabs */}
-          <div className={`flex p-1 rounded-2xl mb-8 ${isDark ? 'bg-white/5' : 'bg-zinc-200/50'}`}>
+          <div className={`flex p-1.5 rounded-2xl mb-8 ${isDark ? 'bg-white/5' : 'bg-zinc-200/50'}`}>
             <button 
               onClick={() => setRoleTab('student')}
-              className={`flex-1 py-3 rounded-xl text-xs font-bold transition-all ${roleTab === 'student' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
+              className={`flex-1 py-3.5 rounded-xl text-xs font-bold transition-all ${roleTab === 'student' ? 'bg-harbour-500 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-700'}`}
             >
               Student
             </button>
             <button 
               onClick={() => setRoleTab('mentor')}
-              className={`flex-1 py-3 rounded-xl text-xs font-bold transition-all ${roleTab === 'mentor' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
+              className={`flex-1 py-3.5 rounded-xl text-xs font-bold transition-all ${roleTab === 'mentor' ? 'bg-zinc-900 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-700'}`}
             >
               Mentor
             </button>
@@ -4277,7 +4761,22 @@ export default function App() {
             </div>
             <div className="space-y-2">
               <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-400">Password</label>
-              <input name="password" type="password" className={`w-full border rounded-2xl px-6 py-4 focus:outline-none ${isDark ? 'bg-white/5 border-white/10 focus:border-harbour-500' : 'bg-white border-zinc-200 focus:border-harbour-500'}`} placeholder="••••••••" required />
+              <div className="relative">
+                <input 
+                  name="password" 
+                  type={showPassword ? "text" : "password"} 
+                  className={`w-full border rounded-2xl px-6 py-4 pr-14 focus:outline-none ${isDark ? 'bg-white/5 border-white/10 focus:border-harbour-500' : 'bg-white border-zinc-200 focus:border-harbour-500'}`} 
+                  placeholder="••••••••" 
+                  required 
+                />
+                <button 
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600"
+                >
+                  {showPassword ? <Lock size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
 
             <div className="flex justify-end">
@@ -4322,6 +4821,16 @@ export default function App() {
               <img src="https://www.google.com/favicon.ico" className="w-5 h-5" />
               Continue with Google
             </button>
+
+            <div className="text-center pt-4">
+              <button 
+                type="button"
+                onClick={() => setAuthView('role-selection')}
+                className="text-xs font-bold text-zinc-500 hover:text-zinc-900"
+              >
+                New here? <span className="text-harbour-600">Create account</span>
+              </button>
+            </div>
           </form>
         </div>
       );
@@ -4339,51 +4848,59 @@ export default function App() {
             <p className="text-zinc-500 text-sm">Enter your email to receive a reset link.</p>
           </div>
 
-          {!forgotPasswordSent ? (
-            <form className="space-y-6" onSubmit={handleForgotPassword}>
-              <AuthError message={authError} />
-              <div className="space-y-2">
-                <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-400">Email Address</label>
-                <input name="email" type="email" className={`w-full border rounded-2xl px-6 py-4 focus:outline-none ${isDark ? 'bg-white/5 border-white/10 focus:border-harbour-500' : 'bg-white border-zinc-200 focus:border-harbour-500'}`} placeholder="julian@example.com" required />
-              </div>
-              <button 
-                type="submit"
-                disabled={isAuthLoading}
-                className={`w-full bg-zinc-900 text-white font-bold py-5 rounded-[2rem] shadow-xl transition-all flex items-center justify-center gap-2 ${isAuthLoading ? 'opacity-70 scale-[0.98]' : 'hover:scale-[1.02]'}`}
+          <AnimatePresence mode="wait">
+            {!forgotPasswordSent ? (
+              <motion.form 
+                key="forgot-form"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-6" 
+                onSubmit={handleForgotPassword}
               >
-                {isAuthLoading ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Sending...
-                  </>
-                ) : (
-                  'Send Reset Link'
-                )}
-              </button>
-            </form>
-          ) : (
-            <div className="text-center space-y-6">
-              <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
-                <CheckCircle2 size={40} />
-              </div>
-              <div className="space-y-2">
-                <h3 className="text-xl font-bold">Email Sent!</h3>
-                <p className="text-zinc-500 text-sm">We've sent a password reset link to your email address.</p>
-              </div>
-              <button 
-                onClick={() => setAuthView('reset-password')}
-                className="w-full bg-zinc-900 text-white font-bold py-5 rounded-[2rem]"
+                <AuthError message={authError} />
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-400">Email Address</label>
+                  <input name="email" type="email" className={`w-full border rounded-2xl px-6 py-4 focus:outline-none ${isDark ? 'bg-white/5 border-white/10 focus:border-harbour-500' : 'bg-white border-zinc-200 focus:border-harbour-500'}`} placeholder="julian@example.com" required />
+                </div>
+                <button 
+                  type="submit"
+                  disabled={isAuthLoading}
+                  className={`w-full bg-zinc-900 text-white font-bold py-5 rounded-[2rem] shadow-xl transition-all flex items-center justify-center gap-2 ${isAuthLoading ? 'opacity-70 scale-[0.98]' : 'hover:scale-[1.02]'}`}
+                >
+                  {isAuthLoading ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Sending...
+                    </>
+                  ) : (
+                    'Send Reset Link'
+                  )}
+                </button>
+              </motion.form>
+            ) : (
+              <motion.div 
+                key="forgot-success"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="text-center space-y-6 py-8"
               >
-                Proceed to Reset (Demo)
-              </button>
-            </div>
-          )}
-
-          <div className="mt-auto text-center">
-            <button onClick={() => setAuthView('sign-in')} className="text-xs font-bold text-zinc-400 hover:text-zinc-900">
-              Back to Sign In
-            </button>
-          </div>
+                <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/20">
+                  <CheckCircle2 size={40} />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-2xl font-bold">Email Sent!</h3>
+                  <p className="text-zinc-500 text-sm leading-relaxed max-w-[240px] mx-auto">We've sent a password reset link to your email address. Please check your inbox.</p>
+                </div>
+                <button 
+                  onClick={() => { setAuthView('sign-in'); setForgotPasswordSent(false); }}
+                  className="w-full bg-zinc-900 text-white font-bold py-5 rounded-[2rem] shadow-xl"
+                >
+                  Back to Sign In
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       );
     };
@@ -4463,126 +4980,22 @@ export default function App() {
         </div>
       </div>
 
-      {/* New Mentor Onboarding */}
-      {isNewUser && !isStudent && (
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-8 space-y-4"
-        >
-          <div className={`p-6 rounded-[2rem] border ${isDark ? 'bg-white/5 border-white/10' : 'bg-zinc-50 border-zinc-200'}`}>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-harbour-500/20 flex items-center justify-center text-harbour-500">
-                <Users size={20} />
-              </div>
-              <div>
-                <h3 className={`text-sm font-bold ${isDark ? 'text-white' : 'text-zinc-900'}`}>No students yet</h3>
-                <p className={`text-[10px] ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>Start your teaching journey today</p>
-              </div>
-            </div>
-            
-            <div className="space-y-2">
-              <button 
-                onClick={() => setView('profile')}
-                className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-200 hover:border-zinc-300'}`}
-              >
-                <div className="flex items-center gap-3">
-                  <User size={14} className="text-harbour-500" />
-                  <span className={`text-[10px] font-bold ${isDark ? 'text-white/80' : 'text-zinc-700'}`}>Complete Profile</span>
-                </div>
-                <ChevronRight size={14} className="text-white/20" />
-              </button>
-              
-              <button 
-                onClick={() => setShowScheduleSheet(true)}
-                className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-200 hover:border-zinc-300'}`}
-              >
-                <div className="flex items-center gap-3">
-                  <Calendar size={14} className="text-harbour-500" />
-                  <span className={`text-[10px] font-bold ${isDark ? 'text-white/80' : 'text-zinc-700'}`}>Add Availability</span>
-                </div>
-                <ChevronRight size={14} className="text-white/20" />
-              </button>
-
-              <button 
-                className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-200 hover:border-zinc-300'}`}
-              >
-                <div className="flex items-center gap-3">
-                  <Upload size={14} className="text-harbour-500" />
-                  <span className={`text-[10px] font-bold ${isDark ? 'text-white/80' : 'text-zinc-700'}`}>Upload First Resource</span>
-                </div>
-                <ChevronRight size={14} className="text-white/20" />
-              </button>
-
-              <button 
-                onClick={() => {
-                  const mockMentor: MentorDetail = {
-                    id: currentUser?.uid || 'new',
-                    name: userProfile?.name || 'New Mentor',
-                    tagline: userProfile?.tagline || 'Traditional Music Expert',
-                    photo: userProfile?.photo || "https://picsum.photos/seed/mentor/400",
-                    rating: 5.0,
-                    reviewCount: 0,
-                    location: userProfile?.location || 'Malaysia',
-                    address: userProfile?.address || 'Kuala Lumpur',
-                    pricePerLesson: 60,
-                    studentsCount: 0,
-                    experienceYears: 10,
-                    about: userProfile?.about || 'Professional traditional music instructor.',
-                    specialisation: Array.isArray(userProfile?.specialisation) ? userProfile.specialisation : (userProfile?.specialisation ? [userProfile.specialisation] : ['Sape', 'Gambus']),
-                    teachingStyle: ['Traditional', 'Modern'],
-                    languages: ['Malay', 'English'],
-                    isVerified: false,
-                    packages: [],
-                    reviews: [],
-                    credentials: [],
-                    gallery: []
-                  };
-                  setSelectedMentor(mockMentor);
-                  pushStudentView('mentor-profile');
-                  setIsStudent(true); // Temporarily switch to student mode to preview
-                }}
-                className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-200 hover:border-zinc-300'}`}
-              >
-                <div className="flex items-center gap-3">
-                  <Eye size={14} className="text-harbour-500" />
-                  <span className={`text-[10px] font-bold ${isDark ? 'text-white/80' : 'text-zinc-700'}`}>Preview Profile</span>
-                </div>
-                <ChevronRight size={14} className="text-white/20" />
-              </button>
-            </div>
+      {/* Mentor Dashboard Content */}
+      <div className="px-6 space-y-8">
+        {/* Welcome Section */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className={`text-2xl font-serif-sturdy tracking-tight ${isDark ? 'text-white' : 'text-zinc-900'}`}>Hello, {userProfile?.name?.split(' ')[0] || 'Mentor'}</h2>
+            <p className={`text-xs font-medium tracking-widest uppercase ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>Welcome back to your studio</p>
           </div>
-        </motion.div>
-      )}
-
-      {/* Profile Progress - Smaller */}
-      {profileProgress < 100 && !isNewUser && (
-        <motion.div 
-          initial={{ y: -10, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="bg-white/10 backdrop-blur-xl border border-white/10 p-3 rounded-2xl mb-4 flex items-center gap-3"
-        >
-          <div className="flex-1">
-            <div className="flex justify-between mb-1">
-              <span className="text-[8px] font-bold uppercase tracking-widest text-white/40">Profile Progress</span>
-              <span className="text-[8px] font-bold text-white/60">{profileProgress}%</span>
-            </div>
-            <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-              <motion.div 
-                initial={{ width: 0 }}
-                animate={{ width: `${profileProgress}%` }}
-                className="h-full bg-harbour-500 rounded-full shadow-[0_0_10px_rgba(20,184,166,0.5)]"
-              />
-            </div>
+          <div className="relative">
+            <button className={`w-10 h-10 rounded-full border flex items-center justify-center ${isDark ? 'bg-white/5 border-white/10 text-white' : 'bg-white border-zinc-200 text-zinc-900 shadow-sm'}`}>
+              <Bell size={20} />
+            </button>
+            <div className="absolute top-0 right-0 w-3 h-3 bg-harbour-500 border-2 border-zinc-900 rounded-full" />
           </div>
-          <button 
-            onClick={() => setView('profile')}
-            className="w-8 h-8 bg-white/10 rounded-xl flex items-center justify-center text-white/60 hover:bg-white/20 transition-colors"
-          >
-            <ChevronRight size={14} />
-          </button>
-        </motion.div>
-      )}
+        </div>
+      </div>
 
       {/* Tabs Toggle */}
       {profileProgress === 100 ? (
@@ -5568,6 +5981,7 @@ export default function App() {
                   { label: 'Full Name', value: editForm.name, key: 'name', type: 'text' },
                   { label: 'Email Address', value: editForm.email, key: 'email', type: 'email' },
                   { label: 'Phone Number', value: editForm.phone, key: 'phone', type: 'tel' },
+                  { label: 'Date of Birth', value: editForm.birthday || '', key: 'birthday', type: 'date' },
                   { label: 'Location', value: editForm.location, key: 'location', type: 'text' },
                   { label: 'About / Bio', value: editForm.about, key: 'about', type: 'textarea' },
                   { label: 'Price Per Lesson (RM)', value: editForm.pricePerLesson.toString(), key: 'pricePerLesson', type: 'number' },
@@ -6686,14 +7100,14 @@ export default function App() {
               transition={{ duration: 0.3 }}
               className="flex-1 overflow-y-auto scrollbar-hide pb-24"
             >
-              {view === 'home' && HomeView()}
-              {view === 'full-schedule' && FullScheduleView()}
-              {view === 'students' && StudentsView()}
-              {view === 'messages' && MessagesView()}
-              {view === 'wallet' && WalletView()}
-              {view === 'profile' && ProfileView()}
-              {view === 'log-session' && LogSessionView()}
-              {view === 'student-detail' && StudentDetailView()}
+              {view === 'home' && <HomeView />}
+              {view === 'full-schedule' && <FullScheduleView />}
+              {view === 'students' && <StudentsView />}
+              {view === 'messages' && <MessagesView />}
+              {view === 'wallet' && <WalletView />}
+              {view === 'profile' && <ProfileView />}
+              {view === 'log-session' && <LogSessionView />}
+              {view === 'student-detail' && <StudentDetailView />}
             </motion.main>
           </AnimatePresence>
 

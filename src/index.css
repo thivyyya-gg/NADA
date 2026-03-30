@@ -32,6 +32,17 @@
   --color-emerald-400: #2ECC8A;
   --color-emerald-600: #1E9E6A;
 
+  /* Atmospheric Dark Mode Theme */
+  --color-charcoal-950: #050707;
+  --color-pine-dark: #0F2626;
+  --color-seafoam-glow: #3D6B6B;
+
+  /* Nordic Clarity Light Mode */
+  --color-nordic-bg: #F8F9F9;
+  --color-nordic-text: #1A211E;
+  --color-refraction-silver: rgba(224, 231, 235, 0.5);
+  --color-refraction-cyan: rgba(180, 210, 210, 0.3);
+
   /* Keep old colors for compatibility during transition if needed, but PDF says to map them */
   --color-harbour-500: #1D9E75;
   --color-walnut-500: #2A5040;
@@ -63,4 +74,30 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(128, 128, 128, 0.4);
+}
+
+.bg-atmospheric-dark {
+  background: radial-gradient(circle at 80% 80%, var(--color-seafoam-glow) 0%, var(--color-pine-dark) 40%, var(--color-charcoal-950) 100%);
+}
+
+.bg-nordic-light {
+  background-color: var(--color-nordic-bg);
+}
+
+.glass-ice {
+  background: transparent;
+  backdrop-filter: blur(40px) saturate(200%);
+  border: 0.5px solid var(--color-refraction-silver);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.02);
+}
+
+.glass-ice-active {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(24px) saturate(200%);
+  border: 1px solid white;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.05);
+}
+
+.text-nordic-text {
+  color: var(--color-nordic-text);
 }

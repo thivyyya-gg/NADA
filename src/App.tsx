@@ -1525,6 +1525,26 @@ const Badge = ({ children, variant = 'default' }: { children: React.ReactNode, v
   );
 };
 
+const Avatar = ({ name, photo, size = 'sm', className = '' }: { 
+  name?: string, photo?: string, size?: 'sm' | 'md' | 'lg' | 'xl', className?: string 
+}) => {
+  const initials = name?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() || '?';
+  const sizes = { 
+    sm: 'w-8 h-8 text-[10px]', 
+    md: 'w-12 h-12 text-xs', 
+    lg: 'w-20 h-20 text-xl',
+    xl: 'w-24 h-24 text-2xl'
+  };
+  if (photo) {
+    return <img src={photo} className={`${sizes[size]} rounded-full object-cover ${className}`} referrerPolicy="no-referrer" alt={name} />;
+  }
+  return (
+    <div className={`${sizes[size]} rounded-full bg-harbour-500/20 border border-harbour-500/30 flex items-center justify-center font-bold text-harbour-400 ${className}`}>
+      {initials}
+    </div>
+  );
+};
+
 const BottomSheet = ({ isOpen, onClose, title, children, dark = true }: { isOpen: boolean, onClose: () => void, title?: string, children: React.ReactNode, dark?: boolean }) => (
   <AnimatePresence>
     {isOpen && (
@@ -1600,7 +1620,9 @@ const calculateProfileProgress = (profile: any) => {
 };
 
 export default function App() {
+  const isDark = true;
   const [view, setView] = useState<View>('auth');
+  const [authLoading, setAuthLoading] = useState(true);
   const [isAuth, setIsAuth] = useState(false);
   const [isStudent, setIsStudent] = useState(false);
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
@@ -1666,8 +1688,9 @@ export default function App() {
         getDoc(doc(db, 'users', user.uid)).then((docSnap) => {
           if (docSnap.exists()) {
             const userData = docSnap.data();
+            const role = userData.role;
             setUserProfile(userData);
-            setIsStudent(userData.role === 'student');
+            setIsStudent(role === 'student');
             
             // Unsubscribe from previous lessons listener if any
             if (lessonsUnsubscribe) {
@@ -1676,7 +1699,7 @@ export default function App() {
             }
 
             // Check if user is "new" (no lessons/students)
-            const q = query(collection(db, 'lessons'), where(userData.role === 'student' ? 'studentId' : 'mentorId', '==', user.uid));
+            const q = query(collection(db, 'lessons'), where(role === 'student' ? 'studentId' : 'mentorId', '==', user.uid));
             lessonsUnsubscribe = onSnapshot(q, (querySnapshot) => {
               const lessonsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Lesson));
               setLessons(lessonsData);
@@ -1688,18 +1711,21 @@ export default function App() {
               }
             });
 
-            setView('home');
+            // Delay view change to next tick so state is committed
+            setTimeout(() => setView('home'), 0);
           } else {
             // New user, need to register
             setView('registration');
             setIsNewUser(true);
           }
+          setAuthLoading(false);
         });
       } else {
         setCurrentUser(null);
         setUserProfile(null);
         setIsAuth(false);
         setView('auth');
+        setAuthLoading(false);
         
         // Unsubscribe from lessons listener on logout
         if (lessonsUnsubscribe) {
@@ -1730,7 +1756,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isAuth) return;
+    if (!isAuth || !userProfile) return;
     const q = query(collection(db, 'mentors'));
     const unsub = onSnapshot(q, (snap) => {
       const data = snap.docs.map(d => ({ 
@@ -1741,11 +1767,11 @@ export default function App() {
       setMentorsLoading(false);
     });
     return () => unsub();
-  }, [isAuth]);
+  }, [isAuth, userProfile]);
 
   // Students Listener
   useEffect(() => {
-    if (!isAuth || !currentUser) return;
+    if (!isAuth || !currentUser || !userProfile) return;
     
     const q = query(collection(db, 'students'));
     const unsub = onSnapshot(q, (snap) => {
@@ -1759,11 +1785,11 @@ export default function App() {
       handleFirestoreError(error, OperationType.LIST, 'students');
     });
     return () => unsub();
-  }, [isAuth, currentUser]);
+  }, [isAuth, currentUser, userProfile]);
 
   // Session Logs Listener
   useEffect(() => {
-    if (!isAuth || !currentUser) return;
+    if (!isAuth || !currentUser || !userProfile) return;
     
     const q = query(
       collection(db, 'sessionLogs'),
@@ -1778,12 +1804,23 @@ export default function App() {
       } as SessionLog));
       setRealSessionLogs(data);
     }, (error) => {
-      // Collection might not exist yet, ignore index errors for now
-      console.warn("Session logs listener error:", error);
+      if (error.code === 'failed-precondition') {
+        const fallbackQ = query(
+          collection(db, 'sessionLogs'),
+          where(isStudent ? 'studentId' : 'mentorId', '==', currentUser.uid)
+        );
+        onSnapshot(fallbackQ, (snap) => {
+          const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as SessionLog))
+            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          setRealSessionLogs(data);
+        });
+      } else {
+        console.warn("Session logs listener error:", error);
+      }
     });
     
     return () => unsub();
-  }, [isAuth, isStudent, currentUser]);
+  }, [isAuth, isStudent, currentUser, userProfile]);
 
   // Student Active Lesson Listener
   useEffect(() => {
@@ -1805,6 +1842,25 @@ export default function App() {
       } else {
         setStudentActiveLesson(null);
       }
+    }, (error) => {
+      if (error.code === 'failed-precondition') {
+        const fallbackQ = query(
+          collection(db, 'lessons'),
+          where('studentId', '==', currentUser.uid),
+          where('status', 'in', ['pending', 'confirmed'])
+        );
+        onSnapshot(fallbackQ, (snap) => {
+          const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+            .sort((a: any, b: any) => (b.createdAt?.toDate?.() || 0) - (a.createdAt?.toDate?.() || 0));
+          if (docs.length > 0) {
+            setStudentActiveLesson(docs[0]);
+          } else {
+            setStudentActiveLesson(null);
+          }
+        });
+      } else {
+        handleFirestoreError(error, OperationType.GET, 'lessons');
+      }
     });
     
     return () => unsub();
@@ -1812,7 +1868,7 @@ export default function App() {
 
   // Student Journey Data Listener
   useEffect(() => {
-    if (!currentUser || !isStudent) return;
+    if (!currentUser || !isStudent || !userProfile) return;
     
     const lessonsQuery = query(
       collection(db, 'lessons'),
@@ -1830,20 +1886,46 @@ export default function App() {
       setStudentLessons(snap.docs.map(d => ({
         id: d.id, ...d.data()
       })));
+    }, (error) => {
+      if (error.code === 'failed-precondition') {
+        const fallbackQ = query(
+          collection(db, 'lessons'),
+          where('studentId', '==', currentUser.uid)
+        );
+        onSnapshot(fallbackQ, (snap) => {
+          setStudentLessons(snap.docs.map(d => ({ id: d.id, ...d.data() }))
+            .sort((a: any, b: any) => (b.createdAt?.toDate?.() || 0) - (a.createdAt?.toDate?.() || 0)));
+        });
+      } else {
+        handleFirestoreError(error, OperationType.GET, 'lessons');
+      }
     });
     
     const unsub2 = onSnapshot(logsQuery, (snap) => {
       setStudentLogs(snap.docs.map(d => ({
         id: d.id, ...d.data()
       })));
+    }, (error) => {
+      if (error.code === 'failed-precondition') {
+        const fallbackQ = query(
+          collection(db, 'sessionLogs'),
+          where('studentId', '==', currentUser.uid)
+        );
+        onSnapshot(fallbackQ, (snap) => {
+          setStudentLogs(snap.docs.map(d => ({ id: d.id, ...d.data() }))
+            .sort((a: any, b: any) => (b.createdAt?.toDate?.() || 0) - (a.createdAt?.toDate?.() || 0)));
+        });
+      } else {
+        handleFirestoreError(error, OperationType.GET, 'sessionLogs');
+      }
     });
     
     return () => { unsub1(); unsub2(); };
-  }, [currentUser, isStudent]);
+  }, [currentUser, isStudent, userProfile]);
 
   // Student Profile Listener
   useEffect(() => {
-    if (!currentUser || !isStudent) return;
+    if (!currentUser || !isStudent || !userProfile) return;
     const unsub = onSnapshot(
       doc(db, 'students', currentUser.uid),
       (snap) => {
@@ -1856,11 +1938,11 @@ export default function App() {
       }
     );
     return () => unsub();
-  }, [currentUser, isStudent]);
+  }, [currentUser, isStudent, userProfile]);
 
   // Conversations Listener
   useEffect(() => {
-    if (!currentUser || !isStudent) return;
+    if (!currentUser || !isStudent || !userProfile) return;
     
     const q = query(
       collection(db, 'conversations'),
@@ -1872,10 +1954,23 @@ export default function App() {
       setConversations(snap.docs.map(d => ({
         id: d.id, ...d.data()
       })));
+    }, (error) => {
+      if (error.code === 'failed-precondition') {
+        const fallbackQ = query(
+          collection(db, 'conversations'),
+          where('participants', 'array-contains', currentUser.uid)
+        );
+        onSnapshot(fallbackQ, (snap) => {
+          setConversations(snap.docs.map(d => ({ id: d.id, ...d.data() }))
+            .sort((a: any, b: any) => (b.lastMessageAt?.toDate?.() || 0) - (a.lastMessageAt?.toDate?.() || 0)));
+        });
+      } else {
+        handleFirestoreError(error, OperationType.GET, 'conversations');
+      }
     });
     
     return () => unsub();
-  }, [currentUser, isStudent]);
+  }, [currentUser, isStudent, userProfile]);
 
   // Messages Listener
   useEffect(() => {
@@ -1891,7 +1986,9 @@ export default function App() {
       setMessages(snap.docs.map(d => ({
         id: d.id,
         text: d.data().text,
+        senderId: d.data().senderId,
         isMe: d.data().senderId === currentUser?.uid,
+        createdAt: d.data().timestamp,
         time: d.data().timestamp?.toDate()
           ?.toLocaleTimeString([], { 
             hour: '2-digit', 
@@ -1973,22 +2070,39 @@ export default function App() {
   const handleSendMessage = async (text: string) => {
     if (!currentUser || !selectedChat || !text.trim()) return;
 
+    const conversationId = selectedChat.conversationId || selectedChat.id;
+    const trimmedText = text.trim();
+
+    // Optimistic UI update
+    const optimisticMessage = {
+      id: 'temp-' + Date.now(),
+      text: trimmedText,
+      senderId: currentUser.uid,
+      isMe: true,
+      createdAt: null,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      sending: true
+    };
+    setMessages(prev => [...prev, optimisticMessage]);
+
     try {
       const messageData = {
-        text: text.trim(),
+        text: trimmedText,
         senderId: currentUser.uid,
-        createdAt: serverTimestamp(),
+        timestamp: serverTimestamp(),
         read: false
       };
 
-      await addDoc(collection(db, 'conversations', selectedChat.id, 'messages'), messageData);
+      await addDoc(collection(db, 'conversations', conversationId, 'messages'), messageData);
 
-      await updateDoc(doc(db, 'conversations', selectedChat.id), {
-        lastMessage: text.trim(),
+      await updateDoc(doc(db, 'conversations', conversationId), {
+        lastMessage: trimmedText,
         lastMessageAt: serverTimestamp()
       });
     } catch (error) {
       console.error("Error sending message:", error);
+      // Remove optimistic message on error
+      setMessages(prev => prev.filter(m => m.id !== optimisticMessage.id));
     }
   };
 
@@ -2295,7 +2409,7 @@ export default function App() {
 
   // Notifications Listener
   useEffect(() => {
-    if (!currentUser) {
+    if (!currentUser || !userProfile) {
       setNotifications([]);
       return;
     }
@@ -2314,17 +2428,29 @@ export default function App() {
       } as Notification));
       setNotifications(notifs);
     }, (error) => {
-      console.error("Firestore Error in notifications listener:", error);
-      if (error.message.includes("requires an index")) {
-        console.warn("Missing Firestore Index. Please create it using this link: https://console.firebase.google.com/v1/r/project/nada-301ef/firestore/indexes?create_composite=ClBwcm9qZWN0cy9uYWRhLTMwMWVmL2RhdGFiYXNlcy8oZGVmYXVsdCkvY29sbGVjdGlvbkdyb3Vwcy9ub3RpZmljYXRpb25zL2luZGV4ZXMvXxABGgoKBnVzZXJJZBABGg0KCWNyZWF0ZWRBdBACGgwKCF9fbmFtZV9fEAI");
-      }
+      console.warn("Notifications listener error (index may be missing):", error.message);
+      // Fallback: try without orderBy
+      const fallbackQ = query(
+        collection(db, 'notifications'),
+        where('userId', '==', currentUser!.uid)
+      );
+      onSnapshot(fallbackQ, (snap) => {
+        const notifs: Notification[] = snap.docs
+          .map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate() || new Date()
+          } as Notification))
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        setNotifications(notifs);
+      });
     });
 
     return () => unsubscribe();
-  }, [currentUser]);
+  }, [currentUser, userProfile]);
 
   useEffect(() => {
-    if (!currentUser || isStudent) return;
+    if (!currentUser || isStudent || !userProfile) return;
     const unsub = onSnapshot(
       doc(db, 'mentors', currentUser.uid), 
       (snap) => {
@@ -2337,10 +2463,10 @@ export default function App() {
       }
     );
     return () => unsub();
-  }, [currentUser, isStudent]);
+  }, [currentUser, isStudent, userProfile]);
 
   useEffect(() => {
-    if (!currentUser || isStudent) return;
+    if (!currentUser || isStudent || !userProfile) return;
     
     const q = query(
       collection(db, 'lessons'),
@@ -2370,7 +2496,7 @@ export default function App() {
     });
     
     return () => unsub();
-  }, [currentUser, isStudent]);
+  }, [currentUser, isStudent, userProfile]);
 
   const triggerNotification = async (type: string, title: string, body: string) => {
     if (!notificationsEnabled || !currentUser) return;
@@ -2405,10 +2531,13 @@ export default function App() {
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [transactionFilter, setTransactionFilter] = useState<'week' | 'month' | 'custom'>('month');
+  const [transactionSearch, setTransactionSearch] = useState('');
   const [withdrawalSuccess, setWithdrawalSuccess] = useState(false);
   const [isWithdrawing, setIsWithdrawing] = useState<'idle' | 'processing' | 'success'>('idle');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [showSetupDetails, setShowSetupDetails] = useState(false);
+  const [mentorProfileExpandedSection, setMentorProfileExpandedSection] = useState<string | null>(null);
+  const [sessionSaveSuccess, setSessionSaveSuccess] = useState(false);
 
   // Bottom Sheet States
   const [showScheduleSheet, setShowScheduleSheet] = useState(false);
@@ -2504,6 +2633,11 @@ export default function App() {
   const [roleTab, setRoleTab] = useState<'student' | 'mentor'>('student');
   const [forgotPasswordSent, setForgotPasswordSent] = useState(false);
 
+  useEffect(() => {
+    setForgotPasswordSent(false);
+    setAuthError(null);
+  }, [authView]);
+
   // Chat and Profile States
   const [chatNewMessage, setChatNewMessage] = useState('');
   const [studentBio, setStudentBio] = useState("Traditional music enthusiast learning the strings of Malaysia.");
@@ -2518,38 +2652,16 @@ export default function App() {
   const [showAddCardModal, setShowAddCardModal] = useState(false);
   const [newCardData, setNewCardData] = useState({ number: '', expiry: '', cvv: '', name: '' });
 
-  const currentViewIsDark = (isStudent ? (['home', 'mentor-listing', 'mentor-profile', 'book-trial', 'book-paid', 'schedule-view', 'messages'].includes(studentView)) : (view === 'home' || view === 'messages' || view === 'registration' || view === 'full-schedule'));
-  const isDark = preferredTheme !== null ? preferredTheme === 'dark' : currentViewIsDark;
-
-  const toggleTheme = () => {
-    setPreferredTheme(isDark ? 'light' : 'dark');
-  };
-
-  const ThemeToggle = () => (
-    <button 
-      onClick={(e) => { e.stopPropagation(); toggleTheme(); }}
-      className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${isDark ? 'bg-white/10 text-white' : 'bg-black/5 text-zinc-900'}`}
-    >
-      {isDark ? <Sun size={18} /> : <Moon size={18} />}
-    </button>
-  );
+  const currentViewIsDark = studentView !== 'journey';
 
   // --- Views ---
 
   // --- Student Views ---
 
-  const StudentHomeView = ({ forcedDark }: { forcedDark?: boolean }) => {
-    const dark = forcedDark ?? isDark;
+  const StudentHomeView = () => {
+    const dark = true;
     return (
-      <div className={`min-h-full px-5 pt-8 relative overflow-hidden ${dark ? 'bg-black' : 'bg-white'}`}>
-        {/* Atmospheric Background */}
-        {dark && (
-          <div className="absolute inset-0 pointer-events-none">
-            <div className="absolute top-[-10%] right-[-10%] w-[50%] h-[50%] bg-harbour-500/10 blur-[120px] rounded-full" />
-            <div className="absolute bottom-[-10%] left-[-10%] w-[50%] h-[50%] bg-amber-500/5 blur-[120px] rounded-full" />
-          </div>
-        )}
-
+      <div className={`min-h-full px-5 pt-8 relative overflow-hidden ${dark ? 'bg-atmospheric-dark' : 'bg-white'}`}>
         <div className="relative z-10">
           <div className="flex justify-between items-center mb-4">
             <div>
@@ -2568,7 +2680,12 @@ export default function App() {
                   <span className="absolute top-2.5 right-2.5 w-2 h-2 bg-harbour-500 rounded-full border-2 border-black" />
                 )}
               </button>
-              {!forcedDark && <ThemeToggle />}
+              <Avatar 
+                name={userProfile?.name || 'Student'} 
+                photo={userProfile?.photo} 
+                size="sm" 
+                className={`border ${dark ? 'border-white/20' : 'border-black/10'}`} 
+              />
             </div>
           </div>
 
@@ -2608,16 +2725,6 @@ export default function App() {
               className="mb-8 space-y-6"
             >
               <div className={`p-6 rounded-[2rem] border ${dark ? 'bg-white/5 border-white/10' : 'bg-zinc-50 border-zinc-200'}`}>
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 rounded-full bg-harbour-500/20 flex items-center justify-center text-harbour-500">
-                    <Music size={20} />
-                  </div>
-                  <div>
-                    <h3 className={`text-sm font-bold ${dark ? 'text-white' : 'text-zinc-900'}`}>No mentor yet</h3>
-                    <p className={`text-[10px] ${dark ? 'text-white/40' : 'text-zinc-500'}`}>Find your perfect guide</p>
-                  </div>
-                </div>
-                
                 <div className="mb-6">
                   <h4 className={`text-[9px] uppercase tracking-widest font-bold mb-3 ${dark ? 'text-white/30' : 'text-zinc-400'}`}>Suggested Mentors</h4>
                   <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
@@ -2655,24 +2762,25 @@ export default function App() {
               </h2>
             </div>
             <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
-              {(['Malay', 'Indian', 'Chinese', 'Borneo'] as const).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setCultureTab(tab)}
-                  className={`px-5 py-2 rounded-full text-[10px] font-bold transition-all whitespace-nowrap border ${cultureTab === tab ? (dark ? 'bg-white text-black border-white shadow-[0_0_15px_rgba(255,255,255,0.15)]' : 'bg-zinc-900 text-white border-zinc-900 shadow-md') : (dark ? 'bg-white/5 text-white/40 border-white/10' : 'bg-black/5 text-zinc-500 border-black/5')}`}
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
+            {(['Malay', 'Indian', 'Chinese', 'Borneo'] as const).map((tab) => (
+              <motion.button
+                key={tab}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setCultureTab(tab)}
+                className={`px-5 py-2 rounded-full text-[10px] font-bold transition-all whitespace-nowrap border ${cultureTab === tab ? (dark ? 'bg-white text-black border-white shadow-[0_0_15px_rgba(255,255,255,0.15)]' : 'bg-zinc-900 text-white border-zinc-900 shadow-md') : (dark ? 'bg-white/5 text-white/40 border-white/10' : 'bg-black/5 text-zinc-500 border-black/5')}`}
+              >
+                {tab}
+              </motion.button>
+            ))}
+          </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4">
+          <div className="grid grid-cols-1 gap-4 pb-32">
             {MOCK_INSTRUMENTS.filter(i => i.culture === cultureTab).map((instrument) => (
               <motion.div
                 key={instrument.id}
                 whileHover={{ y: -2 }}
-                whileTap={{ scale: 0.99 }}
+                whileTap={{ scale: 0.98 }}
                 transition={{ type: 'tween', duration: 0.1 }}
                 onClick={() => { setSelectedInstrument(instrument); pushStudentView('mentor-listing'); }}
                 className="group relative aspect-[2.4/1] rounded-[2rem] overflow-hidden cursor-pointer shadow-lg"
@@ -2716,13 +2824,7 @@ export default function App() {
       </div>
     );
 
-    if (!mentorsLoading && realMentors.length === 0) return (
-      <div className="flex flex-col items-center justify-center h-64 gap-3">
-        <Music2 size={32} className="text-white/20" />
-        <p className="text-white/40 text-sm">No mentors yet</p>
-        <p className="text-white/20 text-xs">Check back soon</p>
-      </div>
-    );
+    if (!mentorsLoading && realMentors.length === 0) return null;
 
     return (
       <div className="px-5 pt-12">
@@ -2736,22 +2838,25 @@ export default function App() {
           </div>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-4 pb-32">
           {realMentors.filter(m => {
             const progress = calculateProfileProgress(m);
-            return progress === 100 && m.specialisation.includes(selectedInstrument?.name || '');
+            return progress === 100 && (m.specialisation as string[]).some(s => s.toLowerCase().includes(selectedInstrument?.name?.toLowerCase() || ''));
           }).map((mentor) => (
             <motion.div
               key={mentor.id}
               whileTap={{ scale: 0.98 }}
               transition={{ type: 'tween', duration: 0.1 }}
               onClick={() => { setSelectedMentor(mentor); pushStudentView('mentor-profile'); }}
-              className={`border rounded-[2rem] p-5 relative overflow-hidden group transition-colors ${dark ? 'bg-white/5 border-white/10' : 'bg-white border-zinc-100 shadow-sm'}`}
+              className={`border rounded-[2rem] p-5 relative overflow-hidden group transition-colors ${dark ? 'bg-white/5 border-white/10' : 'bg-white border-zinc-100 shadow-sm'} ${
+                selectedInstrument?.culture === 'Malay' ? 'border-l-4 border-l-emerald-500' :
+                selectedInstrument?.culture === 'Indian' ? 'border-l-4 border-l-amber-500' :
+                selectedInstrument?.culture === 'Chinese' ? 'border-l-4 border-l-rose-500' :
+                'border-l-4 border-l-harbour-500'
+              }`}
             >
               <div className="flex gap-4">
-                <div className="w-20 h-20 rounded-2xl overflow-hidden flex-shrink-0">
-                  <img src={mentor.photo} alt={mentor.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                </div>
+                <Avatar name={mentor.name} photo={mentor.photo} size="lg" className="rounded-2xl flex-shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1 mb-1">
                     <h3 className={`text-lg font-serif-sturdy truncate ${dark ? 'text-white' : 'text-zinc-900'}`}>{mentor.name}</h3>
@@ -2788,6 +2893,13 @@ export default function App() {
 
     if (!selectedMentor) return null;
 
+    useEffect(() => {
+      setBookingStepTrial('datetime');
+      setSelectedDate(null);
+      setSelectedTime(null);
+      setStudentNote('');
+    }, [selectedMentor?.id]);
+
     const timeSlots = ['09:00 AM', '10:30 AM', '01:00 PM', '02:30 PM', '04:00 PM', '05:30 PM'];
     const dates = [
       { day: 'Mon', date: '18' },
@@ -2798,7 +2910,7 @@ export default function App() {
     ];
 
     return (
-      <div className={`min-h-full px-5 pt-12 ${dark ? 'bg-black text-white' : 'bg-white text-zinc-900'}`}>
+      <div className={`min-h-full px-5 pt-12 ${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'}`}>
         <header className="flex items-center gap-4 mb-8">
           <button onClick={() => popStudentView()} className={`w-10 h-10 rounded-full border flex items-center justify-center ${dark ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
             <ChevronLeft size={20} />
@@ -2850,7 +2962,7 @@ export default function App() {
               </div>
             </section>
 
-            <section>
+            <section className="pb-32">
               <h2 className={`text-[10px] uppercase tracking-widest font-bold mb-4 ${dark ? 'text-white/30' : 'text-zinc-500'}`}>Add a Note (Optional)</h2>
               <textarea 
                 value={studentNote}
@@ -2862,14 +2974,20 @@ export default function App() {
 
             <button 
               disabled={!selectedDate || !selectedTime}
-              onClick={() => setBookingStepTrial('confirm')}
+              onClick={() => {
+                if (!selectedDate || !selectedTime) {
+                  // shake animation via class toggle - add a shake state
+                  return;
+                }
+                setBookingStepTrial('confirm');
+              }}
               className={`w-full py-5 rounded-full font-bold transition-all mt-8 ${
                 selectedDate && selectedTime 
-                  ? (dark ? 'bg-white text-black' : 'bg-zinc-900 text-white')
+                  ? (dark ? 'bg-white text-black active:scale-95' : 'bg-zinc-900 text-white active:scale-95')
                   : (dark ? 'bg-white/10 text-white/20 cursor-not-allowed' : 'bg-black/10 text-zinc-300 cursor-not-allowed')
               }`}
             >
-              Confirm Selection
+              {!selectedDate ? 'Pick a Date First' : !selectedTime ? 'Pick a Time' : 'Confirm Selection'}
             </button>
           </div>
         ) : (
@@ -2895,7 +3013,7 @@ export default function App() {
     const dark = true;
     if (!selectedMentor) return null;
     return (
-      <div className={`min-h-full px-5 pt-12 ${dark ? 'bg-black text-white' : 'bg-white text-zinc-900'}`}>
+      <div className={`min-h-full px-5 pt-12 ${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'}`}>
         <header className="flex items-center gap-4 mb-8">
           <button onClick={() => popStudentView()} className={`w-10 h-10 rounded-full border flex items-center justify-center ${dark ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
             <ChevronLeft size={20} />
@@ -2906,7 +3024,7 @@ export default function App() {
           </div>
         </header>
 
-        <div className="space-y-6">
+        <div className="space-y-6 pb-32">
           {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].map((day) => (
             <div key={day} className={`p-5 rounded-3xl border ${dark ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
               <div className="flex justify-between items-center mb-4">
@@ -2930,8 +3048,19 @@ export default function App() {
 
     if (!selectedMentor) return null;
 
+    useEffect(() => {
+      setPaymentStep('method');
+    }, [selectedMentor?.id]);
+
+    useEffect(() => {
+      if (paymentStep === 'processing') {
+        const timer = setTimeout(() => setPaymentStep('success'), 2000);
+        return () => clearTimeout(timer);
+      }
+    }, [paymentStep]);
+
     return (
-      <div className={`min-h-full px-5 pt-12 ${dark ? 'bg-black text-white' : 'bg-white text-zinc-900'}`}>
+      <div className={`min-h-full px-5 pt-12 ${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'}`}>
         <header className="flex items-center gap-4 mb-8">
           <button onClick={() => popStudentView()} className={`w-10 h-10 rounded-full border flex items-center justify-center ${dark ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
             <ChevronLeft size={20} />
@@ -2943,7 +3072,7 @@ export default function App() {
         </header>
 
         {paymentStep === 'method' ? (
-          <div className="space-y-6">
+          <div className="space-y-6 pb-32">
             <div className={`p-6 rounded-3xl border ${dark ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
               <p className={`text-[10px] font-mono uppercase tracking-widest mb-2 ${dark ? 'text-white/30' : 'text-zinc-500'}`}>Selected Package</p>
               <h3 className={`text-xl font-serif-sturdy mb-1 ${dark ? 'text-white' : 'text-zinc-900'}`}>Standard Package</h3>
@@ -2988,7 +3117,6 @@ export default function App() {
             />
             <h2 className="text-xl font-serif-sturdy mb-2">Processing Payment</h2>
             <p className={`text-xs uppercase tracking-widest ${dark ? 'text-white/40' : 'text-zinc-500'}`}>Please do not close this window</p>
-            {setTimeout(() => setPaymentStep('success'), 2000) && null}
           </div>
         ) : (
           <div className="text-center py-12">
@@ -3015,17 +3143,23 @@ export default function App() {
       if (view === 'home') return true; // Dark
       if (view === 'journey') return false; // Light
       if (view === 'messages') return true; // Dark
-      if (view === 'profile') return isDark; // User preference for profile
+      if (view === 'profile') return true; // User preference for profile
       if (view === 'mentor-listing') return true; // Always Dark as requested
       if (view === 'mentor-profile') return true; // Always Dark as requested
-      return isDark;
+      return true;
     };
 
     const currentViewIsDark = getViewTheme(studentView);
 
     return (
-      <div className={`h-full flex flex-col transition-colors duration-500 ${currentViewIsDark ? 'bg-black text-white' : 'bg-white text-zinc-900'}`}>
-        <div className="flex-1 overflow-y-auto scrollbar-hide pb-24">
+      <div className={`h-full flex flex-col transition-colors duration-500 relative overflow-hidden ${currentViewIsDark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'}`}>
+        {currentViewIsDark && (
+          <div className="absolute inset-0 pointer-events-none">
+            <div className="absolute bottom-[-20%] right-[-10%] w-[80%] h-[80%] bg-seafoam-glow/20 blur-[150px] rounded-full" />
+            <div className="absolute top-[20%] left-[10%] w-[60%] h-[60%] bg-pine-dark/10 blur-[120px] rounded-full" />
+          </div>
+        )}
+        <div className="flex-1 overflow-y-auto scrollbar-hide pb-24 relative z-10">
           <AnimatePresence mode="wait">
             {studentView === 'home' && (
               <motion.div key="home" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -3098,7 +3232,6 @@ export default function App() {
   };
   const MentorProfileView = () => {
     const dark = true;
-    const [localExpandedSection, setLocalExpandedSection] = useState<string | null>(null);
 
     if (!selectedMentor) return null;
 
@@ -3110,7 +3243,7 @@ export default function App() {
     const coverImage = mentorInstrument?.photo || selectedMentor.photo;
 
     return (
-      <div className={`${dark ? 'bg-black text-white' : 'bg-white text-zinc-900'} min-h-full`}>
+      <div className={`${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'} min-h-full`}>
         <div className="relative h-64 overflow-hidden">
           {selectedMentor.introVideoUrl ? (
             <video
@@ -3146,7 +3279,7 @@ export default function App() {
           )}
           <div className="absolute bottom-6 left-5 flex items-end gap-4">
             <div className="relative">
-              <img src={selectedMentor.photo} className={`w-24 h-24 rounded-[2rem] object-cover border-4 shadow-2xl ${dark ? 'border-black' : 'border-white'}`} referrerPolicy="no-referrer" />
+              <Avatar name={selectedMentor.name} photo={selectedMentor.photo} size="xl" className={`rounded-[2rem] border-4 shadow-2xl ${dark ? 'border-black' : 'border-white'}`} />
               {selectedMentor.isVerified && <div className={`absolute -bottom-1 -right-1 p-1 rounded-full border-2 ${dark ? 'bg-harbour-400 text-white border-black' : 'bg-harbour-500 text-white border-white'}`}><CheckCircle2 size={12} /></div>}
             </div>
             <div className="mb-2">
@@ -3175,6 +3308,27 @@ export default function App() {
                 <p className={`text-sm font-bold ${dark ? 'text-white' : 'text-zinc-900'}`}>{stat.value}</p>
               </div>
             ))}
+          </div>
+
+          {/* Profile Completion Shimmer */}
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <span className={`text-[10px] font-bold uppercase tracking-widest ${dark ? 'text-white/40' : 'text-zinc-500'}`}>Profile Completion</span>
+              <span className={`text-[10px] font-bold ${dark ? 'text-harbour-400' : 'text-harbour-600'}`}>{calculateProfileProgress(selectedMentor)}%</span>
+            </div>
+            <div className={`h-1.5 w-full rounded-full overflow-hidden relative ${dark ? 'bg-white/10' : 'bg-black/5'}`}>
+              <motion.div 
+                initial={{ width: 0 }}
+                animate={{ width: `${calculateProfileProgress(selectedMentor)}%` }}
+                className="h-full bg-harbour-500 relative"
+              >
+                <motion.div 
+                  animate={{ x: ['-100%', '100%'] }}
+                  transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
+                  className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent w-1/2"
+                />
+              </motion.div>
+            </div>
           </div>
 
           <button 
@@ -3223,8 +3377,8 @@ export default function App() {
                     if (section.id === 'schedule') {
                       setShowScheduleSheet(true);
                     } else {
-                      const isExpanding = localExpandedSection !== section.id;
-                      setLocalExpandedSection(isExpanding ? section.id : null);
+                      const isExpanding = mentorProfileExpandedSection !== section.id;
+                      setMentorProfileExpandedSection(isExpanding ? section.id : null);
                       if (isExpanding) {
                         setTimeout(() => {
                           document.getElementById(`section-${section.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -3238,12 +3392,12 @@ export default function App() {
                     <section.icon size={18} className={dark ? 'text-white/40' : 'text-zinc-400'} />
                     <span className={`text-sm font-bold ${dark ? 'text-white' : 'text-zinc-900'}`}>{section.label}</span>
                   </div>
-                  <motion.div animate={{ rotate: localExpandedSection === section.id ? 180 : 0 }}>
+                  <motion.div animate={{ rotate: mentorProfileExpandedSection === section.id ? 180 : 0 }}>
                     <ChevronRight size={16} className={dark ? 'text-white/20' : 'text-zinc-300'} />
                   </motion.div>
                 </button>
                 <AnimatePresence>
-                  {localExpandedSection === section.id && (
+                  {mentorProfileExpandedSection === section.id && (
                     <motion.div
                       initial={{ height: 0, opacity: 0 }}
                       animate={{ height: 'auto', opacity: 1 }}
@@ -3369,11 +3523,11 @@ export default function App() {
     );
   };
 
-  const StudentJourneyView = ({ forcedDark }: { forcedDark?: boolean }) => {
-    const dark = forcedDark ?? isDark;
+  const StudentJourneyView = () => {
+    const dark = false;
     
     if (studentLessons.length === 0) return (
-      <div className={`flex flex-col items-center justify-center h-full gap-4 text-center px-8 pt-20 ${dark ? 'bg-black text-white' : 'bg-[#F9F9F9] text-zinc-900'}`}>
+      <div className={`flex flex-col items-center justify-center h-full gap-4 text-center px-8 pt-20 ${dark ? 'bg-atmospheric-dark text-white' : 'bg-[#F9F9F9] text-zinc-900'}`}>
         <div className={`w-20 h-20 rounded-full flex items-center justify-center ${dark ? 'bg-white/5' : 'bg-black/5'}`}>
           <Music2 size={32} className={dark ? 'text-white/20' : 'text-zinc-300'} />
         </div>
@@ -3395,7 +3549,7 @@ export default function App() {
     if (studentLessons.length > 0 && studentLogs.length === 0) {
       const latest = studentLessons[0];
       return (
-        <div className={`min-h-full px-5 pt-8 ${dark ? 'bg-black text-white' : 'bg-[#F9F9F9] text-zinc-900'}`}>
+        <div className={`min-h-full px-5 pt-8 ${dark ? 'bg-atmospheric-dark text-white' : 'bg-[#F9F9F9] text-zinc-900'}`}>
           <h1 className={`text-3xl font-bold mb-6 ${dark ? 'text-white' : 'text-zinc-900'}`}>My Journey</h1>
           <div className={`p-5 rounded-3xl border ${dark ? 'border-white/10 bg-white/5' : 'border-zinc-100 bg-white shadow-sm'}`}>
             <div className="flex items-center gap-2 mb-2">
@@ -3434,15 +3588,18 @@ export default function App() {
 
     const upcomingLesson = studentLessons.find(l => l.status === 'confirmed' && new Date(l.date) >= new Date());
     
-    const instruments = [
-      { id: 'gambus', name: 'Gambus', icon: Music2 },
-      { id: 'tabla', name: 'Tabla', icon: Music },
-      { id: 'erhu', name: 'Erhu', icon: Guitar },
-      { id: 'sitar', name: 'Sitar', icon: Music2 },
-      { id: 'oud', name: 'Oud', icon: Music2 },
-      { id: 'guzheng', name: 'Guzheng', icon: Music2 },
-    ];
+    // Dynamic instruments based on student's active lessons
+    const activeInstruments = Array.from(new Set(studentLessons.map(l => l.instrument).filter(Boolean)));
+    const instruments = activeInstruments.map(name => ({
+      id: (name as string).toLowerCase(),
+      name: name as string,
+      icon: Music2
+    }));
 
+    if (instruments.length === 0) {
+      instruments.push({ id: 'gambus', name: 'Gambus', icon: Music2 });
+    }
+    
     const stats = {
       status: 'On Track',
       id: `#${currentUser?.uid.slice(0, 4)}`
@@ -3483,7 +3640,7 @@ export default function App() {
     });
     
     return (
-      <div className="min-h-full px-5 pt-8 bg-[#F9F9F9] text-zinc-900">
+      <div className="min-h-full px-5 pt-8 bg-[#F9F9F9] text-zinc-900 pb-32">
         {/* Header Area */}
         <div className="flex justify-between items-end mb-4">
           <div>
@@ -3494,7 +3651,6 @@ export default function App() {
               </p>
             </div>
           </div>
-          <ThemeToggle />
         </div>
 
         {/* Instrument Switcher Chips */}
@@ -3538,7 +3694,7 @@ export default function App() {
               <div className="bg-white border border-zinc-100 rounded-[2.5rem] p-6 shadow-xl shadow-teal-500/5 relative overflow-hidden">
                 <div className="flex justify-between items-start mb-6">
                   <div className="flex gap-4 items-center">
-                    <img src={mentor.photo} className="w-12 h-12 rounded-xl object-cover shadow-md" referrerPolicy="no-referrer" />
+                    <Avatar name={mentor.name} photo={mentor.photo} size="md" className="rounded-xl shadow-md" />
                     <div>
                       <h3 className="font-serif text-lg text-zinc-900">{mentor.name}</h3>
                       <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-400">{selectedInstrumentJourney} • Lesson #5</p>
@@ -3832,13 +3988,13 @@ export default function App() {
     };
 
     return (
-      <div className={`fixed inset-0 z-[150] flex flex-col ${dark ? 'bg-black text-white' : 'bg-white text-zinc-900'}`}>
+      <div className={`fixed inset-0 z-[150] flex flex-col ${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'}`}>
         <div className={`px-5 pt-12 pb-4 flex items-center gap-4 border-b ${dark ? 'border-white/10' : 'border-zinc-100'}`}>
           <button onClick={onBack} className={`p-2 rounded-full ${dark ? 'bg-white/5 text-white' : 'bg-black/5 text-zinc-900'}`}>
             <ChevronLeft size={20} />
           </button>
           <div className="flex items-center gap-3">
-            <img src={recipient.photo} className="w-10 h-10 rounded-xl object-cover" referrerPolicy="no-referrer" />
+            <Avatar name={recipient.name} photo={recipient.photo} size="sm" className="rounded-xl" />
             <div>
               <h3 className="font-bold text-sm">{recipient.name}</h3>
               <p className="text-[10px] text-harbour-400 uppercase tracking-widest">
@@ -3856,12 +4012,17 @@ export default function App() {
             </div>
           )}
           {messages.map((msg) => (
-            <div key={msg.id} className={`flex ${msg.senderId === currentUser?.uid ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[80%] p-4 rounded-2xl text-xs ${msg.senderId === currentUser?.uid ? (dark ? 'bg-harbour-500 text-white rounded-tr-none' : 'bg-zinc-900 text-white rounded-tr-none') : (dark ? 'bg-white/10 text-white rounded-tl-none' : 'bg-zinc-100 text-zinc-900 rounded-tl-none')}`}>
+            <div key={msg.id} className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[80%] p-4 rounded-2xl text-xs ${msg.isMe ? (dark ? 'bg-harbour-500 text-white rounded-tr-none' : 'bg-zinc-900 text-white rounded-tr-none') : (dark ? 'bg-white/10 text-white rounded-tl-none' : 'bg-zinc-100 text-zinc-900 rounded-tl-none')} ${msg.sending ? 'opacity-70' : ''}`}>
                 <p>{msg.text}</p>
-                <p className={`text-[8px] mt-1 opacity-50 ${msg.senderId === currentUser?.uid ? 'text-right' : 'text-left'}`}>
-                  {msg.createdAt?.toDate ? msg.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Sending...'}
-                </p>
+                <div className={`flex items-center gap-1 mt-1 opacity-50 ${msg.isMe ? 'justify-end' : 'justify-start'}`}>
+                  <p className="text-[8px]">
+                    {msg.time || 'Sending...'}
+                  </p>
+                  {msg.isMe && (
+                    msg.sending ? <Clock size={8} /> : <Check size={8} />
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -3888,39 +4049,61 @@ export default function App() {
     );
   };
 
-  const StudentMessagesView = ({ forcedDark }: { forcedDark?: boolean }) => {
-    const dark = forcedDark ?? isDark;
+  const StudentMessagesView = () => {
+    const dark = true;
+    const [searchQuery, setSearchQuery] = useState('');
     
     if (selectedChat) {
       return <ChatConversation recipient={selectedChat} onBack={() => setSelectedChat(null)} dark={dark} />;
     }
 
+    const filteredConversations = conversations.filter(conv => {
+      const otherParticipantId = conv.participants.find((p: string) => p !== currentUser?.uid);
+      const details = conv.participantDetails[otherParticipantId];
+      return details?.name?.toLowerCase().includes(searchQuery.toLowerCase());
+    });
+
     return (
-      <div className={`h-full flex flex-col pt-16 ${dark ? 'bg-black text-white' : 'bg-white text-zinc-900'}`}>
+      <div className={`h-full flex flex-col pt-16 ${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'}`}>
         <div className="px-5 mb-6">
           <h1 className="text-3xl font-serif-sturdy mb-6">Mentor Messages</h1>
           <div className="relative">
             <Search className={`absolute left-3.5 top-1/2 -translate-y-1/2 ${dark ? 'text-white/30' : 'text-zinc-400'}`} size={14} />
-            <input className={`w-full border rounded-full pl-10 pr-4 py-3 text-xs focus:outline-none ${dark ? 'bg-white/5 border-white/10 text-white' : 'bg-zinc-100 border-zinc-200 text-zinc-900'}`} placeholder="Search mentors..." />
+            <input 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className={`w-full border rounded-full pl-10 pr-4 py-3 text-xs focus:outline-none ${dark ? 'bg-white/5 border-white/10 text-white' : 'bg-zinc-100 border-zinc-200 text-zinc-900'}`} 
+              placeholder="Search mentors..." 
+            />
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 space-y-3">
-          {conversations.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full gap-2 opacity-30">
-              <MessageSquare size={40} />
-              <p className="text-xs font-bold uppercase tracking-widest">No conversations yet</p>
+        <div className="flex-1 overflow-y-auto px-5 space-y-3 pb-32">
+          {filteredConversations.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-center px-10 relative">
+              <div className="absolute inset-0 bg-harbour-500/5 blur-[100px] rounded-full" />
+              <div className="relative z-10">
+                <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-6 mx-auto ${dark ? 'bg-white/5' : 'bg-black/5'}`}>
+                  <MessageSquare size={32} className={dark ? 'text-white/20' : 'text-zinc-300'} />
+                </div>
+                <h3 className="text-lg font-serif-sturdy mb-2">No messages yet</h3>
+                <p className={`text-xs leading-relaxed ${dark ? 'text-white/40' : 'text-zinc-500'}`}>
+                  {searchQuery ? "We couldn't find any mentors matching your search." : "Your musical journey starts with a conversation. Reach out to a mentor to begin."}
+                </p>
+              </div>
             </div>
           ) : (
-            conversations.map((conv) => {
+            filteredConversations.map((conv) => {
               const otherParticipantId = conv.participants.find((p: string) => p !== currentUser?.uid);
               const details = conv.participantDetails[otherParticipantId];
               
               return (
-                <div 
+                <motion.div 
                   key={conv.id} 
+                  whileTap={{ scale: 0.98 }}
                   onClick={() => setSelectedChat({
                     id: conv.id,
+                    conversationId: conv.id,
                     name: details.name,
                     photo: details.photo,
                     role: details.role
@@ -3941,10 +4124,10 @@ export default function App() {
                           {conv.lastMessageAt?.toDate ? conv.lastMessageAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                         </span>
                       </div>
-                      <p className={`text-[11px] truncate ${dark ? 'text-white/40' : 'text-zinc-500'}`}>{conv.lastMessage || 'No messages yet'}</p>
+                      <p className={`text-[11px] truncate ${dark ? 'text-white/40' : 'text-zinc-500'}`}>{conv.lastMessage || ''}</p>
                     </div>
                   </div>
-                </div>
+                </motion.div>
               );
             })
           )}
@@ -3954,6 +4137,8 @@ export default function App() {
   };
 
   const StudentProfileView = () => {
+    const dark = true;
+    const isDark = dark;
     // Use the dynamic user profile
     const profile = studentProfile;
     const [isEditing, setIsEditing] = useState(false);
@@ -3994,21 +4179,19 @@ export default function App() {
     ];
 
     return (
-      <div className={`h-full overflow-y-auto ${isDark ? 'bg-black' : 'bg-zinc-50'}`}>
+      <div className={`h-full overflow-y-auto ${dark ? 'bg-atmospheric-dark' : 'bg-zinc-50'}`}>
         {/* Profile Header */}
-        <header className={`relative px-6 pt-16 pb-8 overflow-hidden ${isDark ? 'bg-zinc-900' : 'bg-zinc-900'} text-white`}>
+        <header className={`relative px-6 pt-16 pb-8 overflow-hidden ${dark ? 'bg-zinc-900' : 'bg-zinc-900'} text-white`}>
           <div className="absolute top-0 right-0 w-96 h-96 bg-harbour-500/10 rounded-full -mr-48 -mt-48 blur-[100px]" />
           
           <div className="relative z-10 flex flex-col items-center text-center">
             <div className="relative mb-6">
-              <div className="w-24 h-24 rounded-[2rem] overflow-hidden border-4 border-white/10 shadow-2xl">
-                <img 
-                  src={editData.photo || "https://picsum.photos/seed/student/400"} 
-                  className="w-full h-full object-cover" 
-                  referrerPolicy="no-referrer" 
-                  alt="Profile"
-                />
-              </div>
+              <Avatar 
+                name={profile.name} 
+                photo={editData.photo} 
+                size="xl" 
+                className="rounded-[2rem] border-4 border-white/10 shadow-2xl" 
+              />
               <button 
                 onClick={handlePhotoUpload}
                 className="absolute -bottom-1 -right-1 w-8 h-8 bg-white text-zinc-900 rounded-xl flex items-center justify-center shadow-xl"
@@ -4039,15 +4222,36 @@ export default function App() {
           </div>
         </header>
 
-        <div className="px-6 mt-8 space-y-8">
+        <div className="px-6 mt-8 space-y-8 pb-32">
           {/* About Me Section */}
           <section className="space-y-4">
-            <h2 className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>About Me</h2>
+            <h2 className={`text-[10px] font-bold uppercase tracking-widest ${dark ? 'text-white/40' : 'text-zinc-500'}`}>About Me</h2>
             
-            <div className={`p-5 rounded-[2rem] border ${isDark ? 'bg-zinc-900 border-white/5' : 'bg-white border-zinc-100 shadow-sm'}`}>
+            {/* Profile Completion Shimmer */}
+            <div className="mb-6">
+              <div className="flex justify-between items-center mb-2">
+                <span className={`text-[10px] font-bold uppercase tracking-widest ${dark ? 'text-white/40' : 'text-zinc-500'}`}>Profile Completion</span>
+                <span className={`text-[10px] font-bold ${dark ? 'text-harbour-400' : 'text-harbour-600'}`}>85%</span>
+              </div>
+              <div className={`h-1.5 w-full rounded-full overflow-hidden relative ${dark ? 'bg-white/10' : 'bg-black/5'}`}>
+                <motion.div 
+                  initial={{ width: 0 }}
+                  animate={{ width: '85%' }}
+                  className="h-full bg-harbour-500 relative"
+                >
+                  <motion.div 
+                    animate={{ x: ['-100%', '100%'] }}
+                    transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
+                    className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent w-1/2"
+                  />
+                </motion.div>
+              </div>
+            </div>
+            
+            <div className={`p-5 rounded-[2rem] border ${dark ? 'bg-zinc-900 border-white/5' : 'bg-white border-zinc-100 shadow-sm'}`}>
               <div className="mb-6">
                 <div className="flex items-center justify-between mb-2">
-                  <p className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-white/20' : 'text-zinc-400'}`}>Short Bio</p>
+                  <p className={`text-[10px] font-bold uppercase tracking-widest ${dark ? 'text-white/20' : 'text-zinc-400'}`}>Short Bio</p>
                 </div>
                 {isEditing ? (
                   <textarea 
@@ -4408,6 +4612,7 @@ export default function App() {
   };
 
   const AuthContainer = () => {
+    const isDark = true;
     const splashCards = [
       {
         title: "Discover Malaysia's Musical Roots",
@@ -4427,7 +4632,13 @@ export default function App() {
     ];
 
     const SplashView = () => (
-      <div className="relative h-screen w-full overflow-hidden bg-black">
+      <div className="relative h-screen w-full overflow-hidden bg-atmospheric-dark">
+        {/* Atmospheric Glow */}
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute bottom-[-20%] right-[-10%] w-[80%] h-[80%] bg-seafoam-glow/20 blur-[150px] rounded-full" />
+          <div className="absolute top-[20%] left-[10%] w-[60%] h-[60%] bg-pine-dark/10 blur-[120px] rounded-full" />
+        </div>
+
         {/* Swipeable Cards */}
         <div className="h-full w-full relative">
           <AnimatePresence mode="wait">
@@ -4514,8 +4725,15 @@ export default function App() {
     );
 
     const RoleSelectionView = () => (
-      <div className={`min-h-screen p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
-        {/* Step Indicator */}
+      <div className={`min-h-screen p-8 flex flex-col relative overflow-hidden ${isDark ? 'bg-atmospheric-dark text-white' : 'bg-zinc-50 text-zinc-900'}`}>
+        {isDark && (
+          <div className="absolute inset-0 pointer-events-none">
+            <div className="absolute bottom-[-20%] right-[-10%] w-[80%] h-[80%] bg-seafoam-glow/20 blur-[150px] rounded-full" />
+            <div className="absolute top-[20%] left-[10%] w-[60%] h-[60%] bg-pine-dark/10 blur-[120px] rounded-full" />
+          </div>
+        )}
+        <div className="relative z-10 flex flex-col h-full">
+          {/* Step Indicator */}
         <div className="flex items-center justify-between mb-8">
           <button onClick={() => { setAuthView('splash'); setAuthError(null); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
             <ChevronLeft size={20} />
@@ -4588,6 +4806,7 @@ export default function App() {
           Continue
         </button>
       </div>
+    </div>
     );
 
     const RegistrationView = ({ role }: { role: 'student' | 'mentor' }) => {
@@ -4605,8 +4824,15 @@ export default function App() {
       const strengthColor = strength <= 25 ? 'bg-red-500' : strength <= 50 ? 'bg-orange-500' : strength <= 75 ? 'bg-yellow-500' : 'bg-emerald-500';
 
       return (
-        <div className={`h-screen flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
-          {/* Header */}
+        <div className={`h-screen flex flex-col relative overflow-hidden ${isDark ? 'bg-atmospheric-dark text-white' : 'bg-zinc-50 text-zinc-900'}`}>
+          {isDark && (
+            <div className="absolute inset-0 pointer-events-none">
+              <div className="absolute bottom-[-20%] right-[-10%] w-[80%] h-[80%] bg-seafoam-glow/20 blur-[150px] rounded-full" />
+              <div className="absolute top-[20%] left-[10%] w-[60%] h-[60%] bg-pine-dark/10 blur-[120px] rounded-full" />
+            </div>
+          )}
+          <div className="relative z-10 flex flex-col h-full">
+            {/* Header */}
           <div className="p-8 pb-4 flex items-center justify-between">
             <button onClick={() => { setAuthView('role-selection'); setAuthError(null); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
               <ChevronLeft size={20} />
@@ -4696,7 +4922,7 @@ export default function App() {
                   <div className="w-full border-t border-zinc-200"></div>
                 </div>
                 <div className="relative flex justify-center text-[10px] uppercase tracking-widest font-bold">
-                  <span className={`px-4 ${isDark ? 'bg-black text-zinc-500' : 'bg-zinc-50 text-zinc-400'}`}>Or</span>
+                  <span className={`px-4 ${isDark ? 'bg-atmospheric-dark text-zinc-500' : 'bg-zinc-50 text-zinc-400'}`}>Or</span>
                 </div>
               </div>
 
@@ -4721,13 +4947,21 @@ export default function App() {
             </form>
           </div>
         </div>
+      </div>
       );
     };
 
     const SignInView = () => {
       return (
-        <div className={`min-h-screen p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
-          <button onClick={() => { setAuthView('splash'); setAuthError(null); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center mb-8">
+        <div className={`min-h-screen p-8 flex flex-col relative overflow-hidden ${isDark ? 'bg-atmospheric-dark text-white' : 'bg-zinc-50 text-zinc-900'}`}>
+          {isDark && (
+            <div className="absolute inset-0 pointer-events-none">
+              <div className="absolute bottom-[-20%] right-[-10%] w-[80%] h-[80%] bg-seafoam-glow/20 blur-[150px] rounded-full" />
+              <div className="absolute top-[20%] left-[10%] w-[60%] h-[60%] bg-pine-dark/10 blur-[120px] rounded-full" />
+            </div>
+          )}
+          <div className="relative z-10 flex flex-col h-full">
+            <button onClick={() => { setAuthView('splash'); setAuthError(null); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center mb-8">
             <ChevronLeft size={20} />
           </button>
 
@@ -4809,7 +5043,7 @@ export default function App() {
                 <div className="w-full border-t border-zinc-200"></div>
               </div>
               <div className="relative flex justify-center text-[10px] uppercase tracking-widest font-bold">
-                <span className={`px-4 ${isDark ? 'bg-black text-zinc-500' : 'bg-zinc-50 text-zinc-400'}`}>Or</span>
+                <span className={`px-4 ${isDark ? 'bg-atmospheric-dark text-zinc-500' : 'bg-zinc-50 text-zinc-400'}`}>Or</span>
               </div>
             </div>
 
@@ -4833,12 +5067,13 @@ export default function App() {
             </div>
           </form>
         </div>
+      </div>
       );
     };
 
     const ForgotPasswordView = () => {
       return (
-        <div className={`min-h-screen p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
+        <div className={`min-h-screen p-8 flex flex-col ${isDark ? 'bg-atmospheric-dark text-white' : 'bg-zinc-50 text-zinc-900'}`}>
           <button onClick={() => setAuthView('sign-in')} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center mb-12">
             <ChevronLeft size={20} />
           </button>
@@ -4906,7 +5141,7 @@ export default function App() {
     };
 
     const ResetPasswordView = () => (
-      <div className={`min-h-screen p-8 flex flex-col ${isDark ? 'bg-black text-white' : 'bg-zinc-50 text-zinc-900'}`}>
+      <div className={`min-h-screen p-8 flex flex-col ${isDark ? 'bg-atmospheric-dark text-white' : 'bg-zinc-50 text-zinc-900'}`}>
         <div className="mb-10 pt-12">
           <h2 className="text-3xl font-serif-sturdy mb-2">Reset Password</h2>
           <p className="text-zinc-500 text-sm">Create a new secure password for your account.</p>
@@ -4961,7 +5196,6 @@ export default function App() {
           </h1>
         </div>
         <div className="flex gap-2">
-          <ThemeToggle />
           <button 
             onClick={() => setShowNotificationSheet(true)}
             className={`w-8 h-8 rounded-full flex items-center justify-center relative ${isDark ? 'bg-white/10 text-white' : 'bg-black/5 text-zinc-900'}`}
@@ -4971,29 +5205,12 @@ export default function App() {
               <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-harbour-500 rounded-full border border-black" />
             )}
           </button>
-          <img 
-            src={userProfile?.photo || "https://picsum.photos/seed/mentor/100"} 
-            className={`w-8 h-8 rounded-full object-cover border ${isDark ? 'border-white/20' : 'border-black/10'}`} 
-            referrerPolicy="no-referrer" 
-            alt="Profile"
+          <Avatar 
+            name={userProfile?.name || 'Mentor'} 
+            photo={userProfile?.photo} 
+            size="sm" 
+            className={`border ${isDark ? 'border-white/20' : 'border-black/10'}`} 
           />
-        </div>
-      </div>
-
-      {/* Mentor Dashboard Content */}
-      <div className="px-6 space-y-8">
-        {/* Welcome Section */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className={`text-2xl font-serif-sturdy tracking-tight ${isDark ? 'text-white' : 'text-zinc-900'}`}>Hello, {userProfile?.name?.split(' ')[0] || 'Mentor'}</h2>
-            <p className={`text-xs font-medium tracking-widest uppercase ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>Welcome back to your studio</p>
-          </div>
-          <div className="relative">
-            <button className={`w-10 h-10 rounded-full border flex items-center justify-center ${isDark ? 'bg-white/5 border-white/10 text-white' : 'bg-white border-zinc-200 text-zinc-900 shadow-sm'}`}>
-              <Bell size={20} />
-            </button>
-            <div className="absolute top-0 right-0 w-3 h-3 bg-harbour-500 border-2 border-zinc-900 rounded-full" />
-          </div>
         </div>
       </div>
 
@@ -5039,14 +5256,12 @@ export default function App() {
                         <div className="flex justify-between items-start mb-4">
                           <div className="flex gap-3 items-center">
                             {/* Student Photo */}
-                            <div className="relative">
-                              <img 
-                                src={student?.photo || `https://picsum.photos/seed/${request.studentId}/100`} 
-                                className={`w-12 h-12 rounded-full object-cover border ${isDark ? 'border-white/10' : 'border-zinc-200'}`} 
-                                referrerPolicy="no-referrer"
-                                alt={request.studentName}
-                              />
-                            </div>
+                            <Avatar 
+                              name={request.studentName} 
+                              photo={student?.photo} 
+                              size="md" 
+                              className={`border ${isDark ? 'border-white/10' : 'border-zinc-200'}`} 
+                            />
                             
                             <div className="min-w-0">
                               <div className="flex items-center gap-2 mb-0.5">
@@ -5155,11 +5370,11 @@ export default function App() {
                           <div className="flex gap-3 items-center">
                             {/* Student Photo */}
                             <div className="relative">
-                              <img 
-                                src={student?.photo || `https://picsum.photos/seed/${lesson.studentId}/100`} 
-                                className={`w-12 h-12 rounded-full object-cover border-2 ${isDark ? 'border-white/10' : 'border-zinc-100'} shadow-lg`} 
-                                referrerPolicy="no-referrer"
-                                alt={lesson.studentName}
+                              <Avatar 
+                                name={lesson.studentName} 
+                                photo={student?.photo} 
+                                size="md" 
+                                className={`border-2 ${isDark ? 'border-white/10' : 'border-zinc-100'} shadow-lg`} 
                               />
                               <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-harbour-600 border-2 border-[#0A0A0A] rounded-full shadow-sm" />
                             </div>
@@ -5364,8 +5579,11 @@ export default function App() {
     </div>
   );
 
-  const StudentsView = () => (
-    <div className="px-5 pt-12">
+  const StudentsView = () => {
+    const [rosterFilter, setRosterFilter] = useState('All');
+    const [rosterSearch, setRosterSearch] = useState('');
+    return (
+      <div className="px-5 pt-12 pb-32">
       <header className="mb-4">
         <span className="text-[8px] uppercase tracking-[0.3em] font-mono font-semibold text-zinc-400 mb-1 block">Roster</span>
         <h1 className="text-2xl font-serif-sturdy">Active Students</h1>
@@ -5373,22 +5591,44 @@ export default function App() {
 
       {/* Filters - Horizontal Scroll */}
       <div className="flex gap-1.5 overflow-x-auto pb-3 scrollbar-hide -mx-5 px-5">
-        {['All', 'Trial', 'Single', 'Package'].map((tab, i) => (
-          <button key={tab} className={`px-3 py-1 rounded-full text-[9px] font-bold whitespace-nowrap transition-all ${i === 0 ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-400'}`}>
+        {['All', 'Trial', 'Single', 'Package'].map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setRosterFilter(tab)}
+            className={`px-3 py-1 rounded-full text-[9px] font-bold whitespace-nowrap transition-all ${
+              rosterFilter === tab ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-400'
+            }`}
+          >
             {tab}
           </button>
         ))}
       </div>
 
+      {/* Search Bar */}
+      <div className="relative mb-3">
+        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400" size={14} />
+        <input
+          value={rosterSearch}
+          onChange={(e) => setRosterSearch(e.target.value)}
+          className="w-full bg-zinc-100 border border-zinc-200 rounded-full pl-10 pr-4 py-2.5 text-xs focus:outline-none"
+          placeholder="Search students..."
+        />
+      </div>
+
       {/* List - Compact Cards */}
-      <div className="space-y-2">
-        {MOCK_STUDENTS.map(student => (
+      <div className="space-y-2 pb-32">
+        {(realStudents.length > 0 ? realStudents : MOCK_STUDENTS)
+          .filter(s => rosterFilter === 'All' || s.package === rosterFilter || 
+            (rosterFilter === 'Package' && (s.package === 'Package 8' || s.package === 'Package 12')))
+          .filter(s => s.name.toLowerCase().includes(rosterSearch.toLowerCase()))
+          .map(student => (
           <motion.div 
             key={student.id}
+            whileTap={{ scale: 0.98 }}
             onClick={() => { setSelectedStudent(student); setView('student-detail'); }}
             className="bg-white border border-zinc-100 p-3 rounded-xl flex items-center gap-3"
           >
-            <img src={student.photo} className="w-10 h-10 rounded-lg object-cover" referrerPolicy="no-referrer" />
+            <Avatar name={student.name} photo={student.photo} size="sm" className="rounded-lg" />
             <div className="flex-1 min-w-0">
               <div className="flex justify-between items-start">
                 <h3 className="text-xs font-bold truncate">{student.name}</h3>
@@ -5404,57 +5644,70 @@ export default function App() {
         ))}
       </div>
     </div>
-  );
+    );
+  };
 
   const MessagesView = () => {
+    const [studentSearch, setStudentSearch] = useState('');
     if (selectedChat) {
-      return <ChatConversation recipient={selectedChat} onBack={() => setSelectedChat(null)} dark={isDark} />;
+      return <ChatConversation recipient={selectedChat} onBack={() => setSelectedChat(null)} dark={true} />;
     }
 
+    const filteredStudents = realStudents.filter(s => s.name.toLowerCase().includes(studentSearch.toLowerCase()));
+
     return (
-      <div className={`h-full flex flex-col pt-16 ${isDark ? 'bg-black text-white' : 'bg-white text-zinc-900'}`}>
+      <div className="h-full flex flex-col pt-16 bg-atmospheric-dark text-white">
         <div className="px-5 mb-6">
-          <h1 className={`text-3xl font-serif-sturdy mb-6 ${isDark ? 'text-white' : 'text-zinc-900'}`}>Student Messages</h1>
+          <h1 className="text-3xl font-serif-sturdy mb-6 text-white">Student Messages</h1>
           <div className="relative">
-            <Search className={`absolute left-3.5 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/30' : 'text-zinc-400'}`} size={14} />
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30" size={14} />
             <input 
-              className={`w-full border rounded-full pl-10 pr-4 py-3 text-xs focus:outline-none ${isDark ? 'bg-white/5 border-white/10 text-white' : 'bg-zinc-100 border-zinc-200 text-zinc-900'}`} 
+              value={studentSearch}
+              onChange={(e) => setStudentSearch(e.target.value)}
+              className="w-full border rounded-full pl-10 pr-4 py-3 text-xs focus:outline-none bg-white/5 border-white/10 text-white" 
               placeholder="Search students..." 
             />
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 space-y-3">
-          {realStudents.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full gap-2 opacity-30">
-              <MessageSquare size={40} />
-              <p className="text-xs font-bold uppercase tracking-widest">No conversations yet</p>
+        <div className="flex-1 overflow-y-auto px-5 space-y-3 pb-32">
+          {filteredStudents.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-48 gap-3 relative overflow-hidden rounded-3xl">
+              <div className="absolute inset-0 bg-gradient-to-b from-transparent to-white/2 rounded-3xl" />
+              <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
+                <MessageSquare size={24} className="text-white/20" />
+              </div>
+              <div className="text-center">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-white/30">No conversations yet</p>
+                <p className="text-[9px] text-white/15 mt-1">Messages from your students will appear here</p>
+              </div>
             </div>
           ) : (
-            realStudents.map((student, i) => (
-              <div 
+            filteredStudents.map((student, i) => (
+              <motion.div 
                 key={student.id} 
+                whileTap={{ scale: 0.98 }}
                 onClick={() => setSelectedChat(student)}
-                className={`p-4 rounded-3xl border transition-all cursor-pointer ${isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-100 shadow-sm hover:border-zinc-200'}`}
+                className="p-4 rounded-3xl border transition-all cursor-pointer bg-white/5 border-white/10 hover:bg-white/10"
               >
                 <div className="flex items-center gap-4">
                   <div className="relative">
-                    <img src={student.photo} className="w-12 h-12 rounded-2xl object-cover" referrerPolicy="no-referrer" />
-                    {i === 0 && <div className={`absolute -top-1 -right-1 w-3.5 h-3.5 bg-harbour-500 rounded-full border-2 ${isDark ? 'border-black' : 'border-white'}`} />}
+                    <Avatar name={student.name} photo={student.photo} size="md" className="rounded-2xl" />
+                    {i === 0 && <div className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-harbour-500 rounded-full border-2 border-black" />}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-start mb-1">
                       <div className="flex items-center gap-2">
                         <h3 className="text-sm font-bold truncate">{student.name}</h3>
-                        <span className={`px-1.5 py-0.5 text-[7px] font-bold rounded uppercase tracking-widest ${isDark ? 'bg-white/10 text-white/40' : 'bg-zinc-100 text-zinc-500'}`}>Student</span>
+                        <span className="px-1.5 py-0.5 text-[7px] font-bold rounded uppercase tracking-widest bg-white/10 text-white/40">Student</span>
                       </div>
-                      <span className={`text-[8px] font-mono ${isDark ? 'text-white/30' : 'text-zinc-400'}`}>12:45 PM</span>
+                      <span className="text-[8px] font-mono text-white/30">12:45 PM</span>
                     </div>
                     <p className="text-[9px] text-harbour-400 uppercase tracking-widest mb-1">{student.instrument}</p>
-                    <p className={`text-[11px] truncate ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>Thanks for the feedback! Looking forward to our next session.</p>
+                    <p className="text-[11px] truncate text-white/40">Thanks for the feedback! Looking forward to our next session.</p>
                   </div>
                 </div>
-              </div>
+              </motion.div>
             )))}
         </div>
       </div>
@@ -5462,6 +5715,7 @@ export default function App() {
   };
 
   const WalletView = () => {
+    const dark = false; // Lock to light
     const handleWithdraw = async () => {
       const amount = parseFloat(withdrawAmount);
       if (isNaN(amount) || amount <= 0 || amount > realBalance) return;
@@ -5535,7 +5789,7 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        <section>
+        <section className="pb-32">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-[10px] uppercase tracking-widest font-bold text-zinc-400">Activity</h2>
             <div className="flex bg-zinc-100 p-1 rounded-full">
@@ -5556,6 +5810,17 @@ export default function App() {
 
           {walletTab === 'transactions' ? (
             <div className="space-y-4">
+              <div className="relative mb-4">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+                <input 
+                  type="text"
+                  placeholder="Search transactions..."
+                  value={transactionSearch}
+                  onChange={(e) => setTransactionSearch(e.target.value)}
+                  className="w-full pl-12 pr-4 py-4 bg-white border border-zinc-100 rounded-3xl text-xs focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
+                />
+              </div>
+
               <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
                 {['Week', 'Month', 'Custom'].map((f) => (
                   <button 
@@ -5568,45 +5833,72 @@ export default function App() {
                 ))}
               </div>
 
-              <div className="space-y-3">
-                {realTransactions.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-40 gap-2 opacity-30">
-                    <Wallet size={28} />
-                    <p className="text-[10px] font-bold uppercase tracking-widest">No earnings yet</p>
+              {(() => {
+                const filteredTransactions = realTransactions.filter(t => {
+                  const matchesSearch = t.studentName.toLowerCase().includes(transactionSearch.toLowerCase()) || 
+                                       t.lessonType.toLowerCase().includes(transactionSearch.toLowerCase());
+                  if (!matchesSearch) return false;
+
+                  if (transactionFilter === 'week') {
+                    const weekAgo = new Date();
+                    weekAgo.setDate(weekAgo.getDate() - 7);
+                    return new Date(t.date) >= weekAgo;
+                  }
+                  if (transactionFilter === 'month') {
+                    const monthAgo = new Date();
+                    monthAgo.setMonth(monthAgo.getMonth() - 1);
+                    return new Date(t.date) >= monthAgo;
+                  }
+                  return true; // 'custom' shows all for now
+                });
+                return (
+                  <div className="space-y-3 pb-32">
+                    {filteredTransactions.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-48 gap-3 relative overflow-hidden rounded-3xl">
+                        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-zinc-50 rounded-3xl" />
+                        <div className="w-16 h-16 rounded-2xl bg-zinc-100 border border-zinc-200 flex items-center justify-center">
+                          <Wallet size={24} className="text-zinc-300" />
+                        </div>
+                        <div className="text-center">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">No earnings yet</p>
+                          <p className="text-[9px] text-zinc-300 mt-1">Your lesson earnings will appear here</p>
+                        </div>
+                      </div>
+                    ) : (
+                      filteredTransactions.map(t => (
+                        <div key={t.id} className="bg-white border border-zinc-100 p-4 rounded-2xl shadow-sm">
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-3">
+                              <Avatar name={t.studentName} photo={t.studentPhoto} size="sm" className="rounded-xl" />
+                              <div>
+                                <p className="text-[11px] font-bold text-zinc-900">{t.studentName}</p>
+                                <p className="text-[9px] text-zinc-400">{new Date(t.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} • {t.lessonType}</p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-sm font-bold text-zinc-900">+RM {t.netAmount.toFixed(2)}</p>
+                              <p className="text-[8px] text-zinc-400">Net after fee</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between pt-3 border-t border-zinc-50">
+                            <div className="flex gap-4">
+                              <div className="flex flex-col">
+                                <span className="text-[8px] uppercase tracking-widest text-zinc-300 font-bold">Gross</span>
+                                <span className="text-[10px] font-mono text-zinc-500">RM {t.grossAmount.toFixed(2)}</span>
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="text-[8px] uppercase tracking-widest text-zinc-300 font-bold">Fee</span>
+                                <span className="text-[10px] font-mono text-zinc-500">-RM {t.platformFee.toFixed(2)}</span>
+                              </div>
+                            </div>
+                            <Badge variant="outline">Completed</Badge>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
-                ) : (
-                  realTransactions.map(t => (
-                    <div key={t.id} className="bg-white border border-zinc-100 p-4 rounded-2xl shadow-sm">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-3">
-                          <img src={t.studentPhoto || `https://picsum.photos/seed/${t.studentId}/100`} className="w-10 h-10 rounded-xl object-cover" referrerPolicy="no-referrer" />
-                          <div>
-                            <p className="text-[11px] font-bold text-zinc-900">{t.studentName}</p>
-                            <p className="text-[9px] text-zinc-400">{new Date(t.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} • {t.lessonType}</p>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-sm font-bold text-zinc-900">+RM {t.netAmount.toFixed(2)}</p>
-                          <p className="text-[8px] text-zinc-400">Net after fee</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between pt-3 border-t border-zinc-50">
-                        <div className="flex gap-4">
-                          <div className="flex flex-col">
-                            <span className="text-[8px] uppercase tracking-widest text-zinc-300 font-bold">Gross</span>
-                            <span className="text-[10px] font-mono text-zinc-500">RM {t.grossAmount.toFixed(2)}</span>
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-[8px] uppercase tracking-widest text-zinc-300 font-bold">Fee</span>
-                            <span className="text-[10px] font-mono text-zinc-500">-RM {t.platformFee.toFixed(2)}</span>
-                          </div>
-                        </div>
-                        <Badge variant="outline">Completed</Badge>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
+                );
+              })()}
             </div>
           ) : (
             <div className="space-y-3">
@@ -5778,13 +6070,12 @@ export default function App() {
           
           <div className="relative z-10 flex flex-col items-center text-center">
             <div className="relative mb-6">
-              <div className="w-28 h-28 rounded-[2.5rem] overflow-hidden border-4 border-white/10 shadow-2xl rotate-3 hover:rotate-0 transition-transform duration-500">
-                <img 
-                  src={mentorProfile.photo || "https://picsum.photos/seed/mentor/400"} 
-                  className="w-full h-full object-cover" 
-                  referrerPolicy="no-referrer" 
-                />
-              </div>
+              <Avatar 
+                name={mentorProfile.name} 
+                photo={mentorProfile.photo} 
+                size="xl" 
+                className="rounded-[2.5rem] border-4 border-white/10 shadow-2xl rotate-3 hover:rotate-0 transition-transform duration-500" 
+              />
               <button 
                 onClick={() => document.getElementById('photo-upload')?.click()}
                 className="absolute -bottom-2 -right-2 w-10 h-10 bg-white text-zinc-900 rounded-2xl flex items-center justify-center shadow-xl transition-transform"
@@ -5843,7 +6134,7 @@ export default function App() {
           </div>
         </header>
 
-        <div className="px-6 -mt-8 relative z-20">
+        <div className="px-6 -mt-8 relative z-20 pb-32">
           {/* Profile Completion Banner - Glassmorphism */}
           <section className="bg-white/80 backdrop-blur-xl p-6 rounded-[2.5rem] shadow-xl border border-white/20 mb-8">
             <div className="flex items-center justify-between mb-4">
@@ -5858,12 +6149,18 @@ export default function App() {
                 {profileProgress === 100 ? 'View Profile' : 'Complete Now'}
               </button>
             </div>
-            <div className="h-1.5 w-full bg-zinc-100 rounded-full overflow-hidden">
+            <div className="h-1.5 w-full bg-zinc-100 rounded-full overflow-hidden relative">
               <motion.div 
                 initial={{ width: 0 }}
                 animate={{ width: `${profileProgress}%` }}
-                className="h-full bg-gradient-to-r from-harbour-400 to-harbour-600 rounded-full"
-              />
+                className="h-full bg-gradient-to-r from-harbour-400 to-harbour-600 rounded-full relative overflow-hidden"
+              >
+                <motion.div 
+                  animate={{ x: ['-100%', '200%'] }}
+                  transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
+                  className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent"
+                />
+              </motion.div>
             </div>
           </section>
 
@@ -6121,10 +6418,51 @@ export default function App() {
 
     const handleSave = () => {
       handleSaveSession();
+      setSessionSaveSuccess(true);
+      setTimeout(() => {
+        setSessionSaveSuccess(false);
+        setView('home');
+      }, 2000);
     };
 
     return (
-      <div className="bg-white text-zinc-900 min-h-screen flex flex-col">
+      <div className="bg-white text-zinc-900 min-h-screen flex flex-col relative">
+        <AnimatePresence>
+          {sessionSaveSuccess && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] bg-white flex flex-col items-center justify-center p-8 text-center"
+            >
+              <motion.div 
+                initial={{ scale: 0.5, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: 'spring', damping: 15 }}
+                className="w-24 h-24 bg-walnut-50 text-walnut-600 rounded-[2.5rem] flex items-center justify-center mb-8 shadow-inner"
+              >
+                <CheckCircle2 size={48} />
+              </motion.div>
+              <motion.h2 
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 0.1 }}
+                className="text-3xl font-serif-sturdy text-zinc-900 mb-4"
+              >
+                Session Logged!
+              </motion.h2>
+              <motion.p 
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 0.2 }}
+                className="text-zinc-500 max-w-[240px] leading-relaxed"
+              >
+                Great job! Your student has been notified and their journey has been updated.
+              </motion.p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <div className="px-5 pt-16 pb-32 flex-1 overflow-y-auto scrollbar-hide">
           <button onClick={() => setView('home')} className="flex items-center gap-1 text-zinc-400 mb-6 text-[10px] uppercase tracking-widest font-bold">
             <ChevronLeft size={14} /> Back
@@ -6313,7 +6651,7 @@ export default function App() {
 
     const toggleMilestone = (milestoneId: string) => {
       if (!selectedStudent || !selectedStudent.learningPath) return;
-      const newPath = selectedStudent.learningPath.map(m => {
+      const newPath = (selectedStudent.learningPath || []).map(m => {
         if (m.id === milestoneId) {
           const nextStatus = m.status === 'completed' ? 'upcoming' : 'completed';
           return { ...m, status: nextStatus } as Milestone;
@@ -6966,9 +7304,16 @@ export default function App() {
   };
 
   return (
-    <div className={`h-screen font-sans transition-colors duration-500 overflow-hidden ${isDark ? 'bg-black text-white' : 'bg-white text-zinc-900'}`}>
+    <div className={`h-screen font-sans transition-colors duration-500 overflow-hidden ${true ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'}`}>
       <div className="max-w-md mx-auto h-full relative overflow-hidden flex flex-col">
-        {!isAuth ? (
+        {authLoading ? (
+          <div className="h-full flex items-center justify-center bg-black">
+            <div className="flex flex-col items-center gap-4">
+              <div className="w-10 h-10 border-2 border-harbour-500 border-t-transparent rounded-full animate-spin" />
+              <p className="text-white/30 text-xs font-mono uppercase tracking-widest">Loading...</p>
+            </div>
+          </div>
+        ) : !isAuth ? (
           <AuthContainer />
         ) : isStudent ? (
           <StudentDashboard />
@@ -7159,6 +7504,9 @@ export default function App() {
             <button 
               onClick={async () => {
                 const unreadNotifs = notifications.filter(n => !n.read);
+                // Optimistic update
+                setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+                
                 for (const notif of unreadNotifs) {
                   try {
                     await updateDoc(doc(db, 'notifications', notif.id), { read: true });

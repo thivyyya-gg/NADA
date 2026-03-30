@@ -158,6 +158,42 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "type", "title", "body", "read", "createdAt"]
+    },
+    "SessionLog": {
+      "title": "SessionLog",
+      "description": "Log of a practice session or lesson",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "mentorId": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "duration": { "type": "integer" },
+        "notes": { "type": "string" },
+        "type": { "type": "string" }
+      }
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Chat conversation between participants",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "participants": { "type": "array", "items": { "type": "string" } },
+        "lastMessage": { "type": "string" },
+        "lastMessageAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Individual message in a conversation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "senderId": { "type": "string" },
+        "text": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
     }
   },
   "firestore": {
@@ -170,6 +206,9 @@
     "/feedback/{id}": { "schema": "Feedback", "description": "Mentor feedback" },
     "/journey_entries/{id}": { "schema": "JourneyEntry", "description": "Journey timeline entries" },
     "/growth_metrics/{id}": { "schema": "GrowthMetric", "description": "Growth tracking data" },
-    "/notifications/{id}": { "schema": "Notification", "description": "Notification documents" }
+    "/notifications/{id}": { "schema": "Notification", "description": "Notification documents" },
+    "/sessionLogs/{id}": { "schema": "SessionLog", "description": "Session logs" },
+    "/conversations/{id}": { "schema": "Conversation", "description": "Chat conversations" },
+    "/conversations/{convId}/messages/{id}": { "schema": "Message", "description": "Chat messages" }
   }
 }

@@ -1,9 +1,10 @@
 {
-  "apiKey": "AIzaSyCK_uhUp77257837isvbkzsgnW5Zpvswbw",
-  "authDomain": "nada-301ef.firebaseapp.com",
-  "projectId": "nada-301ef",
-  "storageBucket": "nada-301ef.firebasestorage.app",
-  "messagingSenderId": "478024897077",
-  "appId": "1:478024897077:web:4f87e87d0ab143c8acd77c",
-  "measurementId": "G-JL9NF5BPPQ"
+  "projectId": "my-gemini-app-490819",
+  "appId": "1:1073226709851:web:e8651c32bab8525653387e",
+  "apiKey": "AIzaSyBxMvyz27ozb4I5rDrH8z0FJDRw2AFleJ4",
+  "authDomain": "my-gemini-app-490819.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-775b0b64-faf1-4837-aa14-5363425b118b",
+  "storageBucket": "my-gemini-app-490819.firebasestorage.app",
+  "messagingSenderId": "1073226709851",
+  "measurementId": ""
 }

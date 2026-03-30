@@ -1639,14 +1639,19 @@ export default function App() {
     specialisation: [],
     pricePerLesson: 0,
     location: '',
+    address: '',
     languages: [],
     introVideoUrl: '',
     teachingStyle: [],
+    teachingMethodology: '',
+    availability: {},
+    gallery: [],
     experienceYears: 0,
     studentsCount: 0,
     rating: 5.0,
     reviewCount: 0,
-    isVerified: false
+    isVerified: false,
+    packages: []
   });
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [authView, setAuthView] = useState<AuthView>('splash');
@@ -1765,6 +1770,8 @@ export default function App() {
       } as MentorDetail));
       setRealMentors(data);
       setMentorsLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'mentors');
     });
     return () => unsub();
   }, [isAuth, userProfile]);
@@ -1935,6 +1942,9 @@ export default function App() {
             ...snap.data()
           }));
         }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, `students/${currentUser.uid}`);
       }
     );
     return () => unsub();
@@ -1995,6 +2005,8 @@ export default function App() {
             minute: '2-digit' 
           }) || ''
       })));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, `conversations/${selectedChat.conversationId}/messages`);
     });
     
     return () => unsub();
@@ -2460,6 +2472,9 @@ export default function App() {
             ...snap.data()
           }));
         }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, `mentors/${currentUser.uid}`);
       }
     );
     return () => unsub();
@@ -2493,6 +2508,8 @@ export default function App() {
           studentId: d.data().studentId
         }))
       );
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'lessons (mentor balance)');
     });
     
     return () => unsub();
@@ -2515,8 +2532,6 @@ export default function App() {
     }
   };
   const [userRole, setUserRole] = useState<'student' | 'mentor' | null>(null);
-  const [showPassword, setShowPassword] = useState(false);
-  const [password, setPassword] = useState('');
   const [splashIndex, setSplashIndex] = useState(0);
   const profileProgress = calculateProfileProgress(mentorProfile);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
@@ -2715,44 +2730,6 @@ export default function App() {
                 </button>
               </div>
             </div>
-          )}
-
-          {/* New Student Onboarding */}
-          {isNewUser && isStudent && (
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mb-8 space-y-6"
-            >
-              <div className={`p-6 rounded-[2rem] border ${dark ? 'bg-white/5 border-white/10' : 'bg-zinc-50 border-zinc-200'}`}>
-                <div className="mb-6">
-                  <h4 className={`text-[9px] uppercase tracking-widest font-bold mb-3 ${dark ? 'text-white/30' : 'text-zinc-400'}`}>Suggested Mentors</h4>
-                  <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
-                    {realMentors.filter(m => calculateProfileProgress(m) === 100).slice(0, 3).map(mentor => (
-                      <div 
-                        key={mentor.id}
-                        onClick={() => { setSelectedMentor(mentor); pushStudentView('mentor-profile'); }}
-                        className={`flex-shrink-0 w-32 p-3 rounded-2xl border transition-all ${dark ? 'bg-white/5 border-white/10' : 'bg-white border-zinc-200 shadow-sm'}`}
-                      >
-                        <img src={mentor.photo} className="w-full aspect-square rounded-xl object-cover mb-2" referrerPolicy="no-referrer" />
-                        <p className={`text-[10px] font-bold truncate ${dark ? 'text-white' : 'text-zinc-900'}`}>{mentor.name}</p>
-                        <p className={`text-[8px] ${dark ? 'text-white/40' : 'text-zinc-500'}`}>{mentor.specialisation[0]}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className={`p-4 rounded-2xl border ${dark ? 'bg-harbour-500/10 border-harbour-500/20' : 'bg-harbour-50 border-harbour-100'}`}>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Bot size={14} className="text-harbour-500" />
-                    <span className={`text-[9px] font-bold uppercase tracking-widest ${dark ? 'text-harbour-400' : 'text-harbour-600'}`}>AI Buddy Tips</span>
-                  </div>
-                  <p className={`text-[10px] leading-relaxed ${dark ? 'text-white/70' : 'text-zinc-600'}`}>
-                    "Try exploring instruments by culture! Each has a unique story and soul. Start with the Sape if you love strings."
-                  </p>
-                </div>
-              </div>
-            </motion.div>
           )}
 
           <div className="mb-5">
@@ -4616,17 +4593,17 @@ export default function App() {
     const splashCards = [
       {
         title: "Discover Malaysia's Musical Roots",
-        image: "https://picsum.photos/seed/sape/800/1200",
+        image: "https://i.ibb.co/tM03GdSj/cover-nada1.png",
         desc: "Explore the rich heritage of traditional instruments from Tabla to Erhu."
       },
       {
         title: "Learn From Real Masters",
-        image: "https://picsum.photos/seed/mentor/800/1200",
+        image: "https://i.ibb.co/vGFC8hz/Gemini-Generated-Image-wct2xrwct2xrwct2.png",
         desc: "Connect with certified mentors who carry the legacy of Malaysian music."
       },
       {
         title: "Your Cultural Journey Starts Here",
-        image: "https://picsum.photos/seed/culture/800/1200",
+        image: "https://i.ibb.co/0yf3Dm0z/booksas.png",
         desc: "Begin your path to mastering the sounds of our homeland."
       }
     ];
@@ -4810,6 +4787,9 @@ export default function App() {
     );
 
     const RegistrationView = ({ role }: { role: 'student' | 'mentor' }) => {
+      const [showPassword, setShowPassword] = useState(false);
+      const [password, setPassword] = useState('');
+
       const getPasswordStrength = (pass: string) => {
         if (!pass) return 0;
         let strength = 0;
@@ -4952,6 +4932,8 @@ export default function App() {
     };
 
     const SignInView = () => {
+      const [showPassword, setShowPassword] = useState(false);
+
       return (
         <div className={`min-h-screen p-8 flex flex-col relative overflow-hidden ${isDark ? 'bg-atmospheric-dark text-white' : 'bg-zinc-50 text-zinc-900'}`}>
           {isDark && (
@@ -6042,6 +6024,9 @@ export default function App() {
 
   const ProfileView = () => {
     const [editForm, setEditForm] = useState(mentorProfile);
+    const [activeSetupItem, setActiveSetupItem] = useState<string | null>(null);
+    const [setupForm, setSetupForm] = useState(mentorProfile);
+    const [showCompletionGuide, setShowCompletionGuide] = useState(false);
 
     useEffect(() => {
       if (isEditingProfile) {
@@ -6049,15 +6034,76 @@ export default function App() {
       }
     }, [isEditingProfile, mentorProfile]);
 
+    useEffect(() => {
+      if (activeSetupItem) {
+        setSetupForm(mentorProfile);
+      }
+    }, [activeSetupItem, mentorProfile]);
+
     const setupItems = [
-      { id: 'video', label: 'Intro Video', icon: Video, status: 'warning', desc: 'Introduce yourself to students' },
-      { id: 'bio', label: 'About & Bio', icon: User, status: 'success', desc: 'Your professional background' },
-      { id: 'skills', label: 'Specialisation', icon: Music2, status: 'success', desc: 'What you teach best' },
-      { id: 'pricing', label: 'Pricing', icon: Wallet, status: 'warning', desc: 'Set your hourly rates' },
-      { id: 'availability', label: 'Availability', icon: Calendar, status: 'success', desc: 'When you are free' },
-      { id: 'path', label: 'Learning Path', icon: BookOpen, status: 'success', desc: 'Your teaching methodology' },
-      { id: 'location', label: 'Location', icon: MapPin, status: 'warning', desc: 'Where lessons happen' },
-      { id: 'gallery', label: 'Gallery', icon: ImageIcon, status: 'success', desc: 'Photos of your studio' },
+      { 
+        id: 'video', 
+        label: 'Intro Video', 
+        icon: Video, 
+        status: mentorProfile.introVideoUrl ? 'success' : 'warning', 
+        desc: 'Introduce yourself to students' 
+      },
+      { 
+        id: 'bio', 
+        label: 'About & Bio', 
+        icon: User, 
+        status: (mentorProfile.about && mentorProfile.tagline) ? 'success' : 'warning', 
+        desc: 'Your professional background' 
+      },
+      { 
+        id: 'skills', 
+        label: 'Specialisation', 
+        icon: Music2, 
+        status: mentorProfile.specialisation?.length > 0 ? 'success' : 'warning', 
+        desc: 'What you teach best' 
+      },
+      { 
+        id: 'pricing', 
+        label: 'Pricing', 
+        icon: Wallet, 
+        status: mentorProfile.pricePerLesson > 0 ? 'success' : 'warning', 
+        desc: 'Set your hourly rates' 
+      },
+      { 
+        id: 'availability', 
+        label: 'Availability', 
+        icon: Calendar, 
+        status: Object.keys(mentorProfile.availability || {}).length > 0 ? 'success' : 'warning', 
+        desc: 'When you are free' 
+      },
+      { 
+        id: 'path', 
+        label: 'Learning Path', 
+        icon: BookOpen, 
+        status: mentorProfile.teachingMethodology ? 'success' : 'warning', 
+        desc: 'Your teaching methodology' 
+      },
+      { 
+        id: 'location', 
+        label: 'Location', 
+        icon: MapPin, 
+        status: (mentorProfile.location && mentorProfile.address) ? 'success' : 'warning', 
+        desc: 'Where lessons happen' 
+      },
+      { 
+        id: 'languages', 
+        label: 'Languages', 
+        icon: FileText, 
+        status: mentorProfile.languages?.length > 0 ? 'success' : 'warning', 
+        desc: 'Languages you speak' 
+      },
+      { 
+        id: 'gallery', 
+        label: 'Gallery', 
+        icon: ImageIcon, 
+        status: mentorProfile.gallery?.length > 0 ? 'success' : 'warning', 
+        desc: 'Photos of your studio' 
+      },
     ];
 
     return (
@@ -6136,14 +6182,29 @@ export default function App() {
 
         <div className="px-6 -mt-8 relative z-20 pb-32">
           {/* Profile Completion Banner - Glassmorphism */}
-          <section className="bg-white/80 backdrop-blur-xl p-6 rounded-[2.5rem] shadow-xl border border-white/20 mb-8">
+          <section 
+            onClick={() => setShowCompletionGuide(true)}
+            className="bg-white/80 backdrop-blur-xl p-6 rounded-[2.5rem] shadow-xl border border-white/20 mb-8 cursor-pointer group"
+          >
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="text-[9px] font-bold uppercase tracking-widest text-zinc-400 mb-1">Profile Strength</h3>
-                <p className="text-xl font-serif-sturdy text-zinc-900">{profileProgress}% Complete</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-xl font-serif-sturdy text-zinc-900">{profileProgress}% Complete</p>
+                  {profileProgress < 100 && (
+                    <span className="text-[9px] font-bold text-harbour-600 bg-harbour-50 px-2 py-0.5 rounded-full uppercase tracking-widest">See what's missing</span>
+                  )}
+                </div>
               </div>
               <button 
-                onClick={() => setView('profile')}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (profileProgress === 100) {
+                    setView('profile');
+                  } else {
+                    setShowCompletionGuide(true);
+                  }
+                }}
                 className="text-[9px] font-bold text-walnut-600 uppercase tracking-widest bg-walnut-50 px-4 py-2.5 rounded-2xl hover:bg-walnut-100 transition-colors"
               >
                 {profileProgress === 100 ? 'View Profile' : 'Complete Now'}
@@ -6358,7 +6419,11 @@ export default function App() {
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="grid grid-cols-1 gap-3">
                   {setupItems.map((item) => (
-                    <button key={item.id} className="w-full p-5 bg-white rounded-[2.5rem] border border-zinc-100 flex items-center justify-between group transition-all shadow-sm">
+                    <button 
+                      key={item.id} 
+                      onClick={() => setActiveSetupItem(item.id)}
+                      className="w-full p-5 bg-white rounded-[2.5rem] border border-zinc-100 flex items-center justify-between group transition-all shadow-sm"
+                    >
                       <div className="flex items-center gap-5">
                         <div className={`w-14 h-14 ${item.status === 'success' ? 'bg-walnut-50 text-walnut-600' : 'bg-amber-50 text-amber-600'} rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform duration-500`}>
                           <item.icon size={24} />
@@ -6383,6 +6448,417 @@ export default function App() {
                     </button>
                   ))}
                 </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Profile Completion Guide Overlay */}
+        <AnimatePresence>
+          {showCompletionGuide && (
+            <motion.div 
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'tween', ease: 'easeOut', duration: 0.3 }}
+              className="fixed inset-0 z-[300] bg-atmospheric-dark flex flex-col"
+            >
+              <header className="px-6 pt-16 pb-6 flex items-center justify-between border-b border-white/5">
+                <button onClick={() => setShowCompletionGuide(false)} className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center text-white">
+                  <ChevronLeft size={24} />
+                </button>
+                <h2 className="text-xl font-serif-sturdy text-white">Profile Completion</h2>
+                <div className="w-12" />
+              </header>
+
+              <div className="flex-1 overflow-y-auto p-8 space-y-10">
+                {/* Progress Circle Section */}
+                <div className="flex flex-col items-center justify-center py-4">
+                  <div className="relative w-40 h-40 flex items-center justify-center">
+                    <svg className="w-full h-full transform -rotate-90">
+                      <circle
+                        cx="80"
+                        cy="80"
+                        r="70"
+                        stroke="currentColor"
+                        strokeWidth="8"
+                        fill="transparent"
+                        className="text-white/5"
+                      />
+                      <motion.circle
+                        cx="80"
+                        cy="80"
+                        r="70"
+                        stroke="currentColor"
+                        strokeWidth="8"
+                        fill="transparent"
+                        strokeDasharray={440}
+                        initial={{ strokeDashoffset: 440 }}
+                        animate={{ strokeDashoffset: 440 - (440 * profileProgress) / 100 }}
+                        transition={{ duration: 1, ease: "easeOut" }}
+                        className="text-emerald-500"
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                      <span className="text-4xl font-serif-sturdy text-white">{profileProgress}%</span>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/40">Complete</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Checklist Section */}
+                <div className="space-y-4">
+                  <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30 ml-1">Required Fields</h3>
+                  <div className="space-y-3">
+                    {[
+                      { id: 'photo', label: 'Photo', weight: 15, status: mentorProfile.photo ? 'success' : 'missing', setupId: 'photo' },
+                      { id: 'bio', label: 'About & Bio', weight: 15, status: (mentorProfile.about && mentorProfile.tagline) ? 'success' : 'missing', setupId: 'bio' },
+                      { id: 'skills', label: 'Specialisation', weight: 20, status: mentorProfile.specialisation?.length > 0 ? 'success' : 'missing', setupId: 'skills' },
+                      { id: 'pricing', label: 'Price Per Lesson', weight: 15, status: mentorProfile.pricePerLesson > 0 ? 'success' : 'missing', setupId: 'pricing' },
+                      { id: 'location', label: 'Location', weight: 10, status: (mentorProfile.location && mentorProfile.address) ? 'success' : 'missing', setupId: 'location' },
+                      { id: 'languages', label: 'Languages', weight: 10, status: mentorProfile.languages?.length > 0 ? 'success' : 'missing', setupId: 'languages' },
+                      { id: 'video', label: 'Intro Video', weight: 15, status: mentorProfile.introVideoUrl ? 'success' : 'missing', setupId: 'video' },
+                    ].map((field) => (
+                      <div 
+                        key={field.id}
+                        className="p-5 bg-white/5 border border-white/10 rounded-[2rem] flex items-center justify-between group"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${field.status === 'success' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+                            {field.status === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-white">{field.label}</p>
+                            <p className="text-[10px] text-white/40 font-medium tracking-widest uppercase">Weight: {field.weight}%</p>
+                          </div>
+                        </div>
+                        {field.status === 'missing' && (
+                          <button 
+                            onClick={() => {
+                              if (field.id === 'photo') {
+                                document.getElementById('photo-upload')?.click();
+                                setShowCompletionGuide(false);
+                              } else {
+                                setActiveSetupItem(field.setupId);
+                                setShowCompletionGuide(false);
+                              }
+                            }}
+                            className="text-[10px] font-bold text-harbour-400 uppercase tracking-widest hover:text-harbour-300 transition-colors flex items-center gap-1"
+                          >
+                            Complete Now <ChevronRight size={12} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Motivational Message */}
+                <div className="p-6 bg-harbour-500/10 border border-harbour-500/20 rounded-[2rem] text-center">
+                  <p className="text-sm font-medium text-harbour-200">
+                    {profileProgress === 100 ? (
+                      "🎉 Your profile is complete! You are now visible to students."
+                    ) : profileProgress >= 75 ? (
+                      "Almost there! Complete the remaining items to boost your visibility."
+                    ) : (
+                      "A complete profile helps you attract 5x more students. Let's finish it!"
+                    )}
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Setup Item Overlays */}
+        <AnimatePresence>
+          {activeSetupItem && (
+            <motion.div 
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'tween', ease: 'easeOut', duration: 0.3 }}
+              className="fixed inset-0 z-[300] bg-atmospheric-dark text-white flex flex-col"
+            >
+              <header className="px-6 pt-16 pb-6 flex items-center justify-between border-b border-white/5">
+                <button onClick={() => setActiveSetupItem(null)} className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center transition-transform">
+                  <ChevronLeft size={24} />
+                </button>
+                <h2 className="text-xl font-serif-sturdy">
+                  {setupItems.find(i => i.id === activeSetupItem)?.label}
+                </h2>
+                <div className="w-12" />
+              </header>
+
+              <div className="flex-1 overflow-y-auto p-8 space-y-8">
+                {activeSetupItem === 'video' && (
+                  <div className="space-y-6">
+                    <div className="space-y-3">
+                      <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Intro Video URL</label>
+                      <input 
+                        type="url" 
+                        value={setupForm.introVideoUrl || ''}
+                        onChange={(e) => setSetupForm({...setupForm, introVideoUrl: e.target.value})}
+                        className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
+                        placeholder="https://youtube.com/watch?v=..."
+                      />
+                    </div>
+                    {setupForm.introVideoUrl && (
+                      <div className="aspect-video w-full bg-black rounded-[2rem] overflow-hidden border border-white/10 flex items-center justify-center">
+                        <Video size={32} className="text-white/20" />
+                        <p className="absolute text-[10px] text-white/40 mt-12">Video Preview Placeholder</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeSetupItem === 'bio' && (
+                  <div className="space-y-6">
+                    <div className="space-y-3">
+                      <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Professional Tagline</label>
+                      <input 
+                        type="text" 
+                        value={setupForm.tagline || ''}
+                        onChange={(e) => setSetupForm({...setupForm, tagline: e.target.value})}
+                        className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
+                        placeholder="e.g. Master of Traditional Sape Music"
+                      />
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">About & Bio</label>
+                      <textarea 
+                        value={setupForm.about || ''}
+                        onChange={(e) => setSetupForm({...setupForm, about: e.target.value})}
+                        className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all min-h-[200px]"
+                        placeholder="Tell students about your journey, experience and passion..."
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {activeSetupItem === 'skills' && (
+                  <div className="space-y-3">
+                    <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Specialisation (comma separated)</label>
+                    <input 
+                      type="text" 
+                      value={Array.isArray(setupForm.specialisation) ? setupForm.specialisation.join(', ') : setupForm.specialisation}
+                      onChange={(e) => setSetupForm({...setupForm, specialisation: e.target.value})}
+                      className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
+                      placeholder="e.g. Sape, Gambus, Traditional Theory"
+                    />
+                  </div>
+                )}
+
+                {activeSetupItem === 'pricing' && (
+                  <div className="space-y-6">
+                    <div className="space-y-3">
+                      <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Price Per Lesson</label>
+                      <div className="relative">
+                        <div className="absolute left-5 top-1/2 -translate-y-1/2 text-sm font-bold text-white/40">RM</div>
+                        <input 
+                          type="number" 
+                          value={setupForm.pricePerLesson || ''}
+                          onChange={(e) => setSetupForm({...setupForm, pricePerLesson: e.target.value})}
+                          className="w-full p-5 pl-14 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-bold focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
+                          placeholder="0.00"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Package Preview</label>
+                      <div className="grid grid-cols-1 gap-3">
+                        {[
+                          { name: 'Free Trial', price: 0, desc: '30 mins · Free' },
+                          { name: 'Single Session', price: setupForm.pricePerLesson || 0, desc: '60 mins' },
+                          { name: '8 Lessons', price: Math.round((setupForm.pricePerLesson || 0) * 8 * 0.90), desc: '10% Discount · 4 months validity', badge: '10% OFF' },
+                          { name: '12 Lessons', price: Math.round((setupForm.pricePerLesson || 0) * 12 * 0.85), desc: '15% Discount · 6 months validity', badge: '15% OFF' },
+                          { name: 'Monthly', price: Math.round((setupForm.pricePerLesson || 0) * 4 * 0.88), desc: '4 lessons · auto renews', badge: 'BEST VALUE' }
+                        ].map((pkg, i) => (
+                          <div key={i} className="p-4 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-between group">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm font-bold text-white">{pkg.name}</p>
+                                {pkg.badge && (
+                                  <span className="px-2 py-0.5 bg-harbour-500/10 text-harbour-500 text-[8px] font-bold rounded-full uppercase tracking-wider">
+                                    {pkg.badge}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-white/40">{pkg.desc}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-sm font-bold text-white">RM {pkg.price}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {activeSetupItem === 'availability' && (
+                  <div className="space-y-6">
+                    <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Weekly Availability</label>
+                    <div className="grid grid-cols-7 gap-2">
+                      {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => (
+                        <div key={day} className="space-y-3">
+                          <p className="text-[10px] font-bold text-center text-white/40">{day}</p>
+                          <div className="flex flex-col gap-2">
+                            {['morning', 'afternoon', 'evening'].map((slot) => {
+                              const isSelected = setupForm.availability?.[day]?.includes(slot);
+                              return (
+                                <button
+                                  key={slot}
+                                  onClick={() => {
+                                    const currentDaySlots = setupForm.availability?.[day] || [];
+                                    const newDaySlots = isSelected 
+                                      ? currentDaySlots.filter((s: string) => s !== slot)
+                                      : [...currentDaySlots, slot];
+                                    setSetupForm({
+                                      ...setupForm,
+                                      availability: {
+                                        ...setupForm.availability,
+                                        [day]: newDaySlots
+                                      }
+                                    });
+                                  }}
+                                  className={`h-12 rounded-xl flex items-center justify-center transition-all ${
+                                    isSelected 
+                                      ? 'bg-harbour-500 text-white shadow-lg shadow-harbour-500/20' 
+                                      : 'bg-white/5 text-white/40 hover:bg-white/10'
+                                  }`}
+                                >
+                                  <div className="rotate-90 text-[8px] font-bold uppercase tracking-tighter">
+                                    {slot === 'morning' ? 'MOR' : slot === 'afternoon' ? 'AFT' : 'EVE'}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
+                      <p className="text-[10px] text-white/40 leading-relaxed">
+                        Morning: 9am-12pm • Afternoon: 2pm-6pm • Evening: 7pm-10pm
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {activeSetupItem === 'path' && (
+                  <div className="space-y-3">
+                    <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Teaching Methodology</label>
+                    <textarea 
+                      value={setupForm.teachingMethodology || ''}
+                      onChange={(e) => setSetupForm({...setupForm, teachingMethodology: e.target.value})}
+                      className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all min-h-[250px]"
+                      placeholder="Describe your unique approach to teaching traditional music..."
+                    />
+                  </div>
+                )}
+
+                {activeSetupItem === 'location' && (
+                  <div className="space-y-6">
+                    <div className="space-y-3">
+                      <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">City / Area</label>
+                      <input 
+                        type="text" 
+                        value={setupForm.location || ''}
+                        onChange={(e) => setSetupForm({...setupForm, location: e.target.value})}
+                        className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
+                        placeholder="e.g. Kuala Lumpur"
+                      />
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Full Address</label>
+                      <input 
+                        type="text" 
+                        value={setupForm.address || ''}
+                        onChange={(e) => setSetupForm({...setupForm, address: e.target.value})}
+                        className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
+                        placeholder="Enter your studio or home address..."
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {activeSetupItem === 'languages' && (
+                  <div className="space-y-3">
+                    <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Languages (comma separated)</label>
+                    <input 
+                      type="text" 
+                      value={Array.isArray(setupForm.languages) ? setupForm.languages.join(', ') : setupForm.languages}
+                      onChange={(e) => setSetupForm({...setupForm, languages: e.target.value})}
+                      className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
+                      placeholder="e.g. English, Malay, Mandarin"
+                    />
+                  </div>
+                )}
+
+                {activeSetupItem === 'gallery' && (
+                  <div className="space-y-6">
+                    <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Studio Gallery (4 Images)</label>
+                    <div className="grid grid-cols-1 gap-4">
+                      {[0, 1, 2, 3].map((idx) => (
+                        <div key={idx} className="space-y-2">
+                          <input 
+                            type="url" 
+                            value={setupForm.gallery?.[idx] || ''}
+                            onChange={(e) => {
+                              const newGallery = [...(setupForm.gallery || ['', '', '', ''])];
+                              newGallery[idx] = e.target.value;
+                              setSetupForm({...setupForm, gallery: newGallery});
+                            }}
+                            className="w-full p-4 bg-white/5 border border-white/10 rounded-2xl text-xs font-medium focus:outline-none focus:bg-white/10 transition-all"
+                            placeholder={`Image URL ${idx + 1}...`}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-8 bg-atmospheric-dark border-t border-white/5">
+                <button 
+                  onClick={() => {
+                    let finalProfile = { ...setupForm };
+                    
+                    // Specific parsing for certain fields
+                    if (activeSetupItem === 'skills') {
+                      finalProfile.specialisation = typeof setupForm.specialisation === 'string'
+                        ? setupForm.specialisation.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0)
+                        : setupForm.specialisation;
+                    }
+
+                    if (activeSetupItem === 'languages') {
+                      finalProfile.languages = typeof setupForm.languages === 'string'
+                        ? setupForm.languages.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0)
+                        : setupForm.languages;
+                    }
+                    
+                    if (activeSetupItem === 'pricing') {
+                      const price = parseFloat(setupForm.pricePerLesson.toString()) || 0;
+                      finalProfile.pricePerLesson = price;
+                      finalProfile.packages = [
+                        { id: 'p0', name: 'Free Trial', lessons: 0, price: 0, description: '30 mins · Free' },
+                        { id: 'p1', name: 'Single Session', lessons: 1, price: price, description: '60 mins' },
+                        { id: 'p2', name: '8 Lessons', lessons: 8, price: Math.round(price * 8 * 0.90), validityMonths: 4, description: '10% Discount' },
+                        { id: 'p3', name: '12 Lessons', lessons: 12, price: Math.round(price * 12 * 0.85), validityMonths: 6, description: '15% Discount' },
+                        { id: 'p4', name: 'Monthly', lessons: 4, price: Math.round(price * 4 * 0.88), description: '4 lessons • auto renews' }
+                      ];
+                    }
+
+                    setMentorProfile(finalProfile);
+                    saveMentorProfile(finalProfile);
+                    setActiveSetupItem(null);
+                  }}
+                  className="w-full py-5 bg-harbour-500 text-white text-sm font-bold rounded-full shadow-2xl shadow-harbour-500/20 active:scale-95 transition-all"
+                >
+                  Save {setupItems.find(i => i.id === activeSetupItem)?.label}
+                </button>
               </div>
             </motion.div>
           )}

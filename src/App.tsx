@@ -22,6 +22,7 @@ import {
   Plus, 
   ArrowUpRight, 
   ArrowDownLeft, 
+  ArrowUpDown,
   Settings, 
   Video, 
   TrendingUp,
@@ -1511,7 +1512,7 @@ const ProgressBar = ({ progress, className = "" }: { progress: number, className
   </div>
 );
 
-const Badge = ({ children, variant = 'default' }: { children: React.ReactNode, variant?: 'default' | 'gold' | 'harbour' | 'outline' }) => {
+const Badge = ({ children, variant = 'default', className = '' }: { children: React.ReactNode, variant?: 'default' | 'gold' | 'harbour' | 'outline', className?: string }) => {
   const styles = {
     default: 'bg-zinc-100 text-zinc-500',
     gold: 'bg-amber-100 text-amber-700',
@@ -1519,7 +1520,7 @@ const Badge = ({ children, variant = 'default' }: { children: React.ReactNode, v
     outline: 'border border-zinc-200 text-zinc-400'
   };
   return (
-    <span className={`text-[8px] font-mono font-bold uppercase tracking-widest px-1.5 py-0.5 rounded-full ${styles[variant]}`}>
+    <span className={`text-[8px] font-mono font-bold uppercase tracking-widest px-1.5 py-0.5 rounded-full ${styles[variant]} ${className}`}>
       {children}
     </span>
   );
@@ -2310,9 +2311,11 @@ export default function App() {
   const handleLogout = async () => {
     try {
       await signOut(auth);
-      setIsAuth(false);
-      setIsStudent(false);
-      setView('auth');
+      setAuthView('splash');
+      setStudentViewStack(['home']);
+      setSelectedMentor(null);
+      setSelectedStudent(null);
+      setSelectedChat(null);
     } catch (error) {
       console.error("Logout Error:", error);
     }
@@ -2562,6 +2565,7 @@ export default function App() {
   const [showAIBuddySheet, setShowAIBuddySheet] = useState(false);
   const [aiBuddyMessages, setAiBuddyMessages] = useState<{role: 'user' | 'assistant', content: string}[]>([]);
   const [isAiBuddyTyping, setIsAiBuddyTyping] = useState(false);
+  const [aiBuddyInput, setAiBuddyInput] = useState('');
   const [bookingDate, setBookingDate] = useState<string | null>(null);
   const [bookingTime, setBookingTime] = useState<string | null>(null);
   const [bookingNote, setBookingNote] = useState('');
@@ -2792,6 +2796,7 @@ export default function App() {
 
   const MentorListingView = () => {
     const dark = true;
+    const [sortBy, setSortBy] = useState<'rating' | 'price-low' | 'price-high' | 'name'>('rating');
 
     if (mentorsLoading) return (
       <div className="flex items-center justify-center h-64">
@@ -2803,20 +2808,41 @@ export default function App() {
 
     if (!mentorsLoading && realMentors.length === 0) return null;
 
+    const sortedMentors = [...realMentors].sort((a, b) => {
+      if (sortBy === 'rating') return b.rating - a.rating;
+      if (sortBy === 'price-low') return a.pricePerLesson - b.pricePerLesson;
+      if (sortBy === 'price-high') return b.pricePerLesson - a.pricePerLesson;
+      if (sortBy === 'name') return a.name.localeCompare(b.name);
+      return 0;
+    });
+
     return (
       <div className="px-5 pt-12">
         <div className="flex items-center gap-4 mb-8">
           <button onClick={() => popStudentView()} className={`w-10 h-10 rounded-full flex items-center justify-center border ${dark ? 'bg-white/5 border-white/10 text-white' : 'bg-black/5 border-black/5 text-zinc-900'}`}>
             <ChevronLeft size={20} />
           </button>
-          <div>
+          <div className="flex-1">
             <h1 className={`text-2xl font-serif-sturdy ${dark ? 'text-white' : 'text-zinc-900'}`}>{selectedInstrument?.name}</h1>
             <Badge variant="harbour">{selectedInstrument?.type}</Badge>
+          </div>
+          <div className="relative">
+            <select 
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="appearance-none bg-white/5 border border-white/10 rounded-full pl-4 pr-10 py-2.5 text-[10px] font-bold uppercase tracking-widest focus:outline-none focus:border-harbour-500 transition-all text-white"
+            >
+              <option value="rating">Top Rated</option>
+              <option value="price-low">Price: Low</option>
+              <option value="price-high">Price: High</option>
+              <option value="name">Name</option>
+            </select>
+            <ArrowUpDown size={12} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/30 pointer-events-none" />
           </div>
         </div>
 
         <div className="space-y-4 pb-32">
-          {realMentors.filter(m => {
+          {sortedMentors.filter(m => {
             const progress = calculateProfileProgress(m);
             return progress === 100 && (m.specialisation as string[]).some(s => s.toLowerCase().includes(selectedInstrument?.name?.toLowerCase() || ''));
           }).map((mentor) => (
@@ -3136,7 +3162,7 @@ export default function App() {
             <div className="absolute top-[20%] left-[10%] w-[60%] h-[60%] bg-pine-dark/10 blur-[120px] rounded-full" />
           </div>
         )}
-        <div className="flex-1 overflow-y-auto scrollbar-hide pb-24 relative z-10">
+        <div className={`flex-1 overflow-y-auto scrollbar-hide relative z-10 ${!['mentor-listing', 'mentor-profile', 'book-trial', 'book-paid', 'schedule-view'].includes(studentView) ? 'pb-24' : ''}`}>
           <AnimatePresence mode="wait">
             {studentView === 'home' && (
               <motion.div key="home" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -3172,38 +3198,40 @@ export default function App() {
         </div>
 
         {/* Bottom Nav */}
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 w-[90%]">
-          <div className="backdrop-blur-2xl border rounded-[2rem] px-2 py-1.5 flex items-center justify-between shadow-2xl transition-all duration-500 bg-zinc-900/90 border-white/10">
-            {[
-              { id: 'home', icon: HomeIcon, label: 'Home' },
-              { id: 'journey', icon: Music2, label: 'Journey' },
-              { id: 'messages', icon: MessageSquare, label: 'Chat' },
-              { id: 'profile', icon: User, label: 'Profile' }
-            ].map((item) => (
-              <button
-                key={item.id}
-                onClick={() => switchStudentTab(item.id as StudentView)}
-                className={`relative flex-1 flex flex-col items-center gap-1 py-2 rounded-2xl transition-all duration-300 ${
-                  studentView === item.id 
-                    ? 'text-white' 
-                    : 'text-zinc-400 opacity-50 hover:opacity-100'
-                }`}
-              >
-                {studentView === item.id && (
-                  <motion.div 
-                    layoutId="activeNavStudent"
-                    className="absolute inset-0 rounded-2xl z-0 bg-white/10"
-                    transition={{ type: 'tween', ease: 'easeOut', duration: 0.3 }}
-                  />
-                )}
-                <div className="relative z-10 flex flex-col items-center gap-1">
-                  <item.icon size={18} strokeWidth={studentView === item.id ? 2.5 : 2} />
-                  <span className="text-[8px] font-bold uppercase tracking-[0.15em]">{item.label}</span>
-                </div>
-              </button>
-            ))}
+        {!['mentor-listing', 'mentor-profile', 'book-trial', 'book-paid', 'schedule-view'].includes(studentView) && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 w-[90%]">
+            <div className="backdrop-blur-2xl border rounded-[2rem] px-2 py-1.5 flex items-center justify-between shadow-2xl transition-all duration-500 bg-zinc-900/90 border-white/10">
+              {[
+                { id: 'home', icon: HomeIcon, label: 'Home' },
+                { id: 'journey', icon: Music2, label: 'Journey' },
+                { id: 'messages', icon: MessageSquare, label: 'Chat' },
+                { id: 'profile', icon: User, label: 'Profile' }
+              ].map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => switchStudentTab(item.id as StudentView)}
+                  className={`relative flex-1 flex flex-col items-center gap-1 py-2 rounded-2xl transition-all duration-300 ${
+                    studentView === item.id 
+                      ? 'text-white' 
+                      : 'text-zinc-400 opacity-50 hover:opacity-100'
+                  }`}
+                >
+                  {studentView === item.id && (
+                    <motion.div 
+                      layoutId="activeNavStudent"
+                      className="absolute inset-0 rounded-2xl z-0 bg-white/10"
+                      transition={{ type: 'tween', ease: 'easeOut', duration: 0.3 }}
+                    />
+                  )}
+                  <div className="relative z-10 flex flex-col items-center gap-1">
+                    <item.icon size={18} strokeWidth={studentView === item.id ? 2.5 : 2} />
+                    <span className="text-[8px] font-bold uppercase tracking-[0.15em]">{item.label}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     );
   };
@@ -3240,7 +3268,10 @@ export default function App() {
             />
           )}
           <div className={`absolute inset-0 bg-gradient-to-t ${dark ? 'from-black' : 'from-white'} via-transparent to-transparent`} />
-          <button onClick={() => popStudentView()} className={`absolute top-12 left-5 w-10 h-10 backdrop-blur-md rounded-full flex items-center justify-center border ${dark ? 'bg-black/40 border-white/10 text-white' : 'bg-white/40 border-black/10 text-zinc-900'}`}>
+          <button 
+            onClick={() => popStudentView()} 
+            className={`absolute top-12 left-5 w-10 h-10 backdrop-blur-xl rounded-full flex items-center justify-center border z-50 transition-all active:scale-90 ${dark ? 'bg-black/20 border-white/10 text-white hover:bg-black/40' : 'bg-white/20 border-black/5 text-zinc-900 hover:bg-white/40'}`}
+          >
             <ChevronLeft size={20} />
           </button>
           {selectedMentor.introVideoUrl && (
@@ -3466,13 +3497,13 @@ export default function App() {
         </div>
 
         {/* Sticky Bottom */}
-        <div className={`fixed bottom-0 left-0 right-0 p-5 backdrop-blur-xl border-t flex items-center gap-4 z-[110] ${dark ? 'bg-black/80 border-white/10' : 'bg-white/80 border-black/5'}`}>
+        <div className={`fixed bottom-0 left-0 right-0 p-6 pb-10 backdrop-blur-2xl border-t flex items-center gap-4 z-[110] ${dark ? 'bg-black/95 border-white/10' : 'bg-white/95 border-black/5'}`}>
           {isStudent && (
             <button 
               onClick={() => {
                 handleStartConversation(selectedMentor.id, selectedMentor.name, selectedMentor.photo);
               }}
-              className={`w-14 h-14 rounded-full flex items-center justify-center border transition-all ${dark ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-white border-zinc-200 text-zinc-900 shadow-sm hover:bg-zinc-50'}`}
+              className={`w-14 h-14 rounded-2xl flex items-center justify-center border transition-all ${dark ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-white border-zinc-200 text-zinc-900 shadow-sm hover:bg-zinc-50'}`}
             >
               <MessageSquare size={20} />
             </button>
@@ -3490,7 +3521,7 @@ export default function App() {
                 setShowBookingSheet(true);
               }
             }}
-            className={`flex-1 font-bold py-4 rounded-full flex items-center justify-center gap-2 shadow-xl transition-all ${dark ? 'bg-white text-black' : 'bg-zinc-900 text-white'}`}
+            className={`flex-1 font-bold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-[0_20px_50px_rgba(0,0,0,0.3)] transition-all active:scale-95 ${dark ? 'bg-white text-black hover:bg-zinc-100' : 'bg-zinc-900 text-white hover:bg-zinc-800'}`}
           >
             <Music2 size={18} />
             {isTrialCompleted ? 'Select a Package' : 'Book Free Trial'}
@@ -4011,6 +4042,7 @@ export default function App() {
               value={chatNewMessage}
               onChange={(e) => setChatNewMessage(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+              onFocus={(e) => e.stopPropagation()}
               placeholder="Type a message..."
               className={`w-full py-4 pl-6 pr-14 rounded-full text-xs focus:outline-none ${dark ? 'bg-white/5 border-white/10 text-white' : 'bg-zinc-100 border-zinc-200 text-zinc-900'}`}
             />
@@ -4049,6 +4081,7 @@ export default function App() {
             <input 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onFocus={(e) => e.stopPropagation()}
               className={`w-full border rounded-full pl-10 pr-4 py-3 text-xs focus:outline-none ${dark ? 'bg-white/5 border-white/10 text-white' : 'bg-zinc-100 border-zinc-200 text-zinc-900'}`} 
               placeholder="Search mentors..." 
             />
@@ -4182,6 +4215,7 @@ export default function App() {
                 <input 
                   value={editData.name}
                   onChange={(e) => setEditData({ ...editData, name: e.target.value })}
+                  onFocus={(e) => e.stopPropagation()}
                   className="text-2xl font-serif-sturdy tracking-tight bg-transparent border-b border-white/20 text-center focus:outline-none focus:border-white"
                 />
               ) : (
@@ -4234,6 +4268,7 @@ export default function App() {
                   <textarea 
                     value={editData.aboutMe}
                     onChange={(e) => setEditData({ ...editData, aboutMe: e.target.value })}
+                    onFocus={(e) => e.stopPropagation()}
                     className={`w-full bg-transparent text-sm leading-relaxed border-b border-harbour-500/50 focus:border-harbour-500 outline-none pb-2 ${isDark ? 'text-white' : 'text-zinc-900'}`}
                     rows={3}
                   />
@@ -4275,6 +4310,7 @@ export default function App() {
                       <input 
                         value={editData.name}
                         onChange={(e) => setEditData({ ...editData, name: e.target.value })}
+                        onFocus={(e) => e.stopPropagation()}
                         className={`text-sm font-bold bg-transparent border-b border-harbour-500/30 focus:outline-none focus:border-harbour-500 ${isDark ? 'text-white' : 'text-zinc-900'}`}
                       />
                     ) : (
@@ -4306,6 +4342,7 @@ export default function App() {
                         type="date"
                         value={editData.birthday}
                         onChange={(e) => setEditData({ ...editData, birthday: e.target.value })}
+                        onFocus={(e) => e.stopPropagation()}
                         className={`text-sm font-bold bg-transparent border-b border-harbour-500/30 focus:outline-none focus:border-harbour-500 ${isDark ? 'text-white' : 'text-zinc-900'}`}
                       />
                     ) : (
@@ -4518,6 +4555,7 @@ export default function App() {
                         placeholder="John Doe"
                         value={newCardData.name}
                         onChange={(e) => setNewCardData({ ...newCardData, name: e.target.value })}
+                        onFocus={(e) => e.stopPropagation()}
                         className={`w-full p-4 rounded-2xl border text-sm font-bold transition-all outline-none ${isDark ? 'bg-white/5 border-white/10 text-white focus:border-harbour-500/50' : 'bg-zinc-50 border-zinc-100 text-zinc-900 focus:border-harbour-500/50'}`}
                       />
                     </div>
@@ -4530,6 +4568,7 @@ export default function App() {
                           placeholder="•••• •••• •••• ••••"
                           value={newCardData.number}
                           onChange={(e) => setNewCardData({ ...newCardData, number: e.target.value })}
+                          onFocus={(e) => e.stopPropagation()}
                           className={`w-full p-4 pl-12 rounded-2xl border text-sm font-bold transition-all outline-none ${isDark ? 'bg-white/5 border-white/10 text-white focus:border-harbour-500/50' : 'bg-zinc-50 border-zinc-100 text-zinc-900 focus:border-harbour-500/50'}`}
                         />
                         <CreditCard size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" />
@@ -4544,6 +4583,7 @@ export default function App() {
                           placeholder="MM/YY"
                           value={newCardData.expiry}
                           onChange={(e) => setNewCardData({ ...newCardData, expiry: e.target.value })}
+                          onFocus={(e) => e.stopPropagation()}
                           className={`w-full p-4 rounded-2xl border text-sm font-bold transition-all outline-none ${isDark ? 'bg-white/5 border-white/10 text-white focus:border-harbour-500/50' : 'bg-zinc-50 border-zinc-100 text-zinc-900 focus:border-harbour-500/50'}`}
                         />
                       </div>
@@ -4554,6 +4594,7 @@ export default function App() {
                           placeholder="•••"
                           value={newCardData.cvv}
                           onChange={(e) => setNewCardData({ ...newCardData, cvv: e.target.value })}
+                          onFocus={(e) => e.stopPropagation()}
                           className={`w-full p-4 rounded-2xl border text-sm font-bold transition-all outline-none ${isDark ? 'bg-white/5 border-white/10 text-white focus:border-harbour-500/50' : 'bg-zinc-50 border-zinc-100 text-zinc-900 focus:border-harbour-500/50'}`}
                         />
                       </div>
@@ -5304,16 +5345,36 @@ export default function App() {
                             <MessageSquare size={16} />
                           </button>
                           <button 
-                            onClick={() => {
-                              triggerNotification('lesson_confirmed', 'Trial Confirmed', `${mentorProfile.name} confirmed your free trial on ${new Date(request.date).toLocaleDateString()} at ${request.time}`);
+                            onClick={async () => {
+                              try {
+                                if (request.id.startsWith('l')) {
+                                  // Handle mock data
+                                  setLessons(prev => prev.map(l => l.id === request.id ? { ...l, status: 'confirmed' } : l));
+                                } else {
+                                  await updateDoc(doc(db, 'lessons', request.id), { status: 'confirmed' });
+                                }
+                                triggerNotification('lesson_confirmed', 'Trial Confirmed', `${mentorProfile.name} confirmed your free trial on ${new Date(request.date).toLocaleDateString()} at ${request.time}`);
+                              } catch (error) {
+                                console.error("Error confirming lesson:", error);
+                              }
                             }}
                             className="flex-1 bg-harbour-600 text-white text-[10px] font-bold py-3 rounded-full hover:bg-harbour-500 transition-colors shadow-lg shadow-harbour-600/20"
                           >
                             Accept Request
                           </button>
                           <button 
-                            onClick={() => {
-                              triggerNotification('lesson_declined', 'Trial Declined', `Your trial request was declined. Find another mentor`);
+                            onClick={async () => {
+                              try {
+                                if (request.id.startsWith('l')) {
+                                  // Handle mock data
+                                  setLessons(prev => prev.map(l => l.id === request.id ? { ...l, status: 'cancelled' } : l));
+                                } else {
+                                  await updateDoc(doc(db, 'lessons', request.id), { status: 'cancelled' });
+                                }
+                                triggerNotification('lesson_declined', 'Trial Declined', `Your trial request was declined. Find another mentor`);
+                              } catch (error) {
+                                console.error("Error declining lesson:", error);
+                              }
                             }}
                             className={`flex-1 border text-[10px] font-bold py-3 rounded-full transition-colors ${isDark ? 'border-white/10 text-white hover:bg-white/5' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
                           >
@@ -5328,6 +5389,44 @@ export default function App() {
             </section>
           ) : (
             <section className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+              {/* Upcoming Lessons Section */}
+              <div className="mb-8">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className={`text-[9px] uppercase tracking-widest font-bold ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>Upcoming Lessons</h2>
+                  <button 
+                    onClick={() => setView('full-schedule')}
+                    className="text-[9px] font-bold text-harbour-500 hover:text-harbour-400 transition-colors flex items-center gap-1"
+                  >
+                    See all <ChevronRight size={10} />
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {lessons
+                    .filter(l => l.status === 'confirmed' && new Date(l.date) >= new Date(new Date().setHours(0,0,0,0)))
+                    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                    .slice(0, 3)
+                    .map(lesson => (
+                      <div key={lesson.id} className={`p-3 rounded-xl border flex items-center justify-between ${isDark ? 'bg-white/5 border-white/10' : 'bg-white border-zinc-100 shadow-sm'}`}>
+                        <div className="flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isDark ? 'bg-white/10 text-white/60' : 'bg-zinc-100 text-zinc-500'}`}>
+                            <Calendar size={14} />
+                          </div>
+                          <div>
+                            <p className={`text-[10px] font-bold ${isDark ? 'text-white' : 'text-zinc-900'}`}>{lesson.studentName}</p>
+                            <p className={`text-[8px] ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>{new Date(lesson.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} • {lesson.time}</p>
+                          </div>
+                        </div>
+                        <ChevronRight size={12} className={isDark ? "text-white/20" : "text-zinc-300"} />
+                      </div>
+                    ))}
+                  {lessons.filter(l => l.status === 'confirmed').length === 0 && (
+                    <div className={`p-4 rounded-xl border border-dashed text-center ${isDark ? 'border-white/10 bg-white/5' : 'border-zinc-200 bg-zinc-50'}`}>
+                      <p className={`text-[9px] font-bold uppercase tracking-widest ${isDark ? 'text-white/30' : 'text-zinc-400'}`}>No confirmed lessons</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="flex items-center justify-between mb-3">
                 <h2 className={`text-[9px] uppercase tracking-widest font-bold ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>Schedule</h2>
                 <button 
@@ -5608,20 +5707,24 @@ export default function App() {
             key={student.id}
             whileTap={{ scale: 0.98 }}
             onClick={() => { setSelectedStudent(student); setView('student-detail'); }}
-            className="bg-white border border-zinc-100 p-3 rounded-xl flex items-center gap-3"
+            className="bg-white border border-zinc-200 p-4 rounded-2xl flex items-center gap-4 shadow-sm hover:border-zinc-300 transition-all"
           >
-            <Avatar name={student.name} photo={student.photo} size="sm" className="rounded-lg" />
+            <Avatar name={student.name} photo={student.photo} size="md" className="rounded-xl border border-zinc-100" />
             <div className="flex-1 min-w-0">
-              <div className="flex justify-between items-start">
-                <h3 className="text-xs font-bold truncate">{student.name}</h3>
-                <Badge variant="outline">{student.lessonsRemaining}</Badge>
+              <div className="flex justify-between items-start mb-1">
+                <h3 className="text-sm font-bold truncate text-zinc-900">{student.name}</h3>
+                <Badge variant="harbour" className="text-[8px] px-1.5 py-0">{student.lessonsRemaining} Left</Badge>
               </div>
-              <p className="text-zinc-400 text-[8px] truncate">{student.instrument}</p>
-              <div className="mt-1.5">
-                <ProgressBar progress={student.progress} className="h-0.5" />
+              <div className="flex items-center gap-1.5 mb-2">
+                <p className="text-zinc-500 text-[9px] font-medium truncate">{student.instrument}</p>
+                <span className="w-0.5 h-0.5 bg-zinc-300 rounded-full" />
+                <span className="text-[9px] font-bold text-harbour-600 uppercase tracking-tighter">Stage {Math.floor(student.progress / 20) + 1}</span>
+              </div>
+              <div className="mt-1">
+                <ProgressBar progress={student.progress} className="h-1 bg-zinc-100" />
               </div>
             </div>
-            <ChevronRight size={12} className="text-zinc-300" />
+            <ChevronRight size={14} className="text-zinc-300" />
           </motion.div>
         ))}
       </div>
@@ -6124,7 +6227,7 @@ export default function App() {
               />
               <button 
                 onClick={() => document.getElementById('photo-upload')?.click()}
-                className="absolute -bottom-2 -right-2 w-10 h-10 bg-white text-zinc-900 rounded-2xl flex items-center justify-center shadow-xl transition-transform"
+                className="absolute -bottom-2 -right-2 w-10 h-10 bg-white text-zinc-900 rounded-2xl flex items-center justify-center shadow-xl transition-transform hover:scale-110"
               >
                 <Camera size={18} />
               </button>
@@ -6353,6 +6456,7 @@ export default function App() {
                       <textarea 
                         value={field.value}
                         onChange={(e) => setEditForm({...editForm, [field.key]: e.target.value})}
+                        onFocus={(e) => e.stopPropagation()}
                         className="w-full p-5 bg-zinc-50 border border-zinc-100 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-zinc-900/5 focus:bg-white transition-all min-h-[120px]"
                         placeholder={`Enter your ${field.label.toLowerCase()}...`}
                       />
@@ -6364,6 +6468,7 @@ export default function App() {
                           const val = e.target.value;
                           setEditForm({...editForm, [field.key]: val});
                         }}
+                        onFocus={(e) => e.stopPropagation()}
                         className="w-full p-5 bg-zinc-50 border border-zinc-100 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-zinc-900/5 focus:bg-white transition-all"
                       />
                     )}
@@ -6599,6 +6704,7 @@ export default function App() {
                         type="url" 
                         value={setupForm.introVideoUrl || ''}
                         onChange={(e) => setSetupForm({...setupForm, introVideoUrl: e.target.value})}
+                        onFocus={(e) => e.stopPropagation()}
                         className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
                         placeholder="https://youtube.com/watch?v=..."
                       />
@@ -6620,6 +6726,7 @@ export default function App() {
                         type="text" 
                         value={setupForm.tagline || ''}
                         onChange={(e) => setSetupForm({...setupForm, tagline: e.target.value})}
+                        onFocus={(e) => e.stopPropagation()}
                         className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
                         placeholder="e.g. Master of Traditional Sape Music"
                       />
@@ -6629,6 +6736,7 @@ export default function App() {
                       <textarea 
                         value={setupForm.about || ''}
                         onChange={(e) => setSetupForm({...setupForm, about: e.target.value})}
+                        onFocus={(e) => e.stopPropagation()}
                         className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all min-h-[200px]"
                         placeholder="Tell students about your journey, experience and passion..."
                       />
@@ -6643,6 +6751,7 @@ export default function App() {
                       type="text" 
                       value={Array.isArray(setupForm.specialisation) ? setupForm.specialisation.join(', ') : setupForm.specialisation}
                       onChange={(e) => setSetupForm({...setupForm, specialisation: e.target.value})}
+                      onFocus={(e) => e.stopPropagation()}
                       className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
                       placeholder="e.g. Sape, Gambus, Traditional Theory"
                     />
@@ -6659,6 +6768,7 @@ export default function App() {
                           type="number" 
                           value={setupForm.pricePerLesson || ''}
                           onChange={(e) => setSetupForm({...setupForm, pricePerLesson: e.target.value})}
+                          onFocus={(e) => e.stopPropagation()}
                           className="w-full p-5 pl-14 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-bold focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
                           placeholder="0.00"
                         />
@@ -6753,6 +6863,7 @@ export default function App() {
                     <textarea 
                       value={setupForm.teachingMethodology || ''}
                       onChange={(e) => setSetupForm({...setupForm, teachingMethodology: e.target.value})}
+                      onFocus={(e) => e.stopPropagation()}
                       className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all min-h-[250px]"
                       placeholder="Describe your unique approach to teaching traditional music..."
                     />
@@ -6767,6 +6878,7 @@ export default function App() {
                         type="text" 
                         value={setupForm.location || ''}
                         onChange={(e) => setSetupForm({...setupForm, location: e.target.value})}
+                        onFocus={(e) => e.stopPropagation()}
                         className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
                         placeholder="e.g. Kuala Lumpur"
                       />
@@ -6777,6 +6889,7 @@ export default function App() {
                         type="text" 
                         value={setupForm.address || ''}
                         onChange={(e) => setSetupForm({...setupForm, address: e.target.value})}
+                        onFocus={(e) => e.stopPropagation()}
                         className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
                         placeholder="Enter your studio or home address..."
                       />
@@ -6791,6 +6904,7 @@ export default function App() {
                       type="text" 
                       value={Array.isArray(setupForm.languages) ? setupForm.languages.join(', ') : setupForm.languages}
                       onChange={(e) => setSetupForm({...setupForm, languages: e.target.value})}
+                      onFocus={(e) => e.stopPropagation()}
                       className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
                       placeholder="e.g. English, Malay, Mandarin"
                     />
@@ -6811,6 +6925,7 @@ export default function App() {
                               newGallery[idx] = e.target.value;
                               setSetupForm({...setupForm, gallery: newGallery});
                             }}
+                            onFocus={(e) => e.stopPropagation()}
                             className="w-full p-4 bg-white/5 border border-white/10 rounded-2xl text-xs font-medium focus:outline-none focus:bg-white/10 transition-all"
                             placeholder={`Image URL ${idx + 1}...`}
                           />
@@ -7713,16 +7828,27 @@ export default function App() {
             <div className="relative group">
               <input 
                 type="text" 
+                value={aiBuddyInput}
+                onChange={(e) => setAiBuddyInput(e.target.value)}
+                onFocus={(e) => e.stopPropagation()}
                 placeholder={isStudent ? "Ask your music companion..." : "Ask your teaching assistant..."}
                 className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl py-4.5 pl-5 pr-14 text-sm focus:outline-none focus:border-zinc-900 focus:bg-white transition-all shadow-inner"
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && e.currentTarget.value.trim()) {
-                    handleAIBuddyAction(e.currentTarget.value);
-                    e.currentTarget.value = '';
+                  if (e.key === 'Enter' && aiBuddyInput.trim()) {
+                    handleAIBuddyAction(aiBuddyInput);
+                    setAiBuddyInput('');
                   }
                 }}
               />
-              <button className="absolute right-2 top-1/2 -translate-y-1/2 w-11 h-11 bg-zinc-900 text-white rounded-xl flex items-center justify-center active:scale-90 transition-all shadow-xl shadow-zinc-900/20">
+              <button 
+                onClick={() => {
+                  if (aiBuddyInput.trim()) {
+                    handleAIBuddyAction(aiBuddyInput);
+                    setAiBuddyInput('');
+                  }
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-11 h-11 bg-zinc-900 text-white rounded-xl flex items-center justify-center active:scale-90 transition-all shadow-xl shadow-zinc-900/20"
+              >
                 <Send size={18} />
               </button>
             </div>
@@ -7827,7 +7953,10 @@ export default function App() {
 
                   <div className="space-y-3">
                     <button 
-                      onClick={() => setActiveLessonAction(null)}
+                      onClick={() => {
+                        setActiveLessonAction(null);
+                        setShowRescheduleModal(true);
+                      }}
                       className="w-full flex items-center gap-4 p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100 transition-colors"
                     >
                       <div className="w-8 h-8 bg-white rounded-xl flex items-center justify-center shadow-sm">
@@ -7837,7 +7966,21 @@ export default function App() {
                     </button>
                     
                     <button 
-                      onClick={() => setActiveLessonAction(null)}
+                      onClick={async () => {
+                        if (window.confirm('Are you sure you want to cancel this lesson?')) {
+                          try {
+                            if (activeLessonAction.id.startsWith('l')) {
+                              setLessons(prev => prev.map(l => l.id === activeLessonAction.id ? { ...l, status: 'cancelled' } : l));
+                            } else {
+                              await updateDoc(doc(db, 'lessons', activeLessonAction.id), { status: 'cancelled' });
+                            }
+                            triggerNotification('lesson_cancelled', 'Lesson Cancelled', `Lesson with ${activeLessonAction.studentName} has been cancelled.`);
+                            setActiveLessonAction(null);
+                          } catch (error) {
+                            console.error("Error cancelling lesson:", error);
+                          }
+                        }
+                      }}
                       className="w-full flex items-center gap-4 p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100 transition-colors"
                     >
                       <div className="w-8 h-8 bg-white rounded-xl flex items-center justify-center shadow-sm">

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, memo } from 'react';
 import { 
   Music2, 
   ChevronRight, 
@@ -1692,8 +1692,6 @@ export default function App() {
   const [realStudents, setRealStudents] = useState<Student[]>([]);
   const [realSessionLogs, setRealSessionLogs] = useState<SessionLog[]>([]);
   const [sessionLessonNumber, setSessionLessonNumber] = useState(1);
-  const [sessionCovered, setSessionCovered] = useState('');
-  const [sessionFocus, setSessionFocus] = useState('');
   const [mentorsLoading, setMentorsLoading] = useState(true);
   const [studentsLoading, setStudentsLoading] = useState(true);
   const [studentActiveLesson, setStudentActiveLesson] = useState<any>(null);
@@ -2462,70 +2460,7 @@ export default function App() {
     }
   };
 
-  const handleSaveSession = async () => {
-    if (!selectedStudent || !selectedLesson || !currentUser) return;
 
-    try {
-      const logData = {
-        studentId: selectedStudent.id,
-        mentorId: currentUser.uid,
-        lessonNumber: selectedLesson.lessonNumber,
-        date: new Date().toISOString().split('T')[0],
-        covered: sessionCovered,
-        focus: sessionFocus,
-        milestones: selectedMilestones,
-        materials: [], // TODO: handle materials
-        rating: sessionRating,
-        mood: studentMood,
-        createdAt: serverTimestamp()
-      };
-
-      await addDoc(collection(db, 'sessionLogs'), logData);
-
-      // Bug 4: Calculate walletCredit and isPartOfPackage
-      const isPartOfPackage = selectedLesson.type === 'Package';
-      const walletCredit = isPartOfPackage 
-        ? (selectedLesson.price / (selectedLesson.totalLessons || 1)) 
-        : selectedLesson.price;
-
-      // Update lesson status to completed
-      await updateDoc(doc(db, 'lessons', selectedLesson.id), {
-        status: 'completed',
-        studentName: selectedStudent.name,
-        price: selectedLesson.price,
-        completedAt: serverTimestamp(),
-        walletCredit,
-        isPartOfPackage
-      });
-
-      // Trigger notifications
-      await triggerNotification(
-        'session_logged', 
-        'Session Logged', 
-        `${userProfile?.name || 'Mentor'} has added notes from your Lesson ${selectedLesson.lessonNumber}`
-      );
-
-      if (selectedMilestones.length > 0) {
-        await triggerNotification(
-          'milestone_completed', 
-          'Milestone Completed', 
-          `You've reached a new milestone in your ${selectedStudent.instrument} journey!`
-        );
-      }
-
-      // Reset states and go home
-      setSessionCovered('');
-      setSessionFocus('');
-      setSelectedMilestones([]);
-      setSessionRating(0);
-      setStudentMood(null);
-      setView('home');
-
-    } catch (error) {
-      console.error("Error saving session log:", error);
-      handleFirestoreError(error, OperationType.CREATE, 'sessionLogs');
-    }
-  };
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotificationSheet, setShowNotificationSheet] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -2678,9 +2613,6 @@ export default function App() {
   const [showPaymentSheet, setShowPaymentSheet] = useState(false);
   const [showAIGenerateSheet, setShowAIGenerateSheet] = useState(false);
   const [showAIBuddySheet, setShowAIBuddySheet] = useState(false);
-  const [aiBuddyMessages, setAiBuddyMessages] = useState<{role: 'user' | 'assistant', content: string}[]>([]);
-  const [isAiBuddyTyping, setIsAiBuddyTyping] = useState(false);
-  const [aiBuddyInput, setAiBuddyInput] = useState('');
   const [bookingDate, setBookingDate] = useState<string | null>(null);
   const [bookingTime, setBookingTime] = useState<string | null>(null);
   const [bookingNote, setBookingNote] = useState('');
@@ -2727,15 +2659,6 @@ export default function App() {
   const [selectedMentor, setSelectedMentor] = useState<MentorDetail | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [cultureTab, setCultureTab] = useState<'Malay' | 'Indian' | 'Chinese' | 'Borneo'>('Malay');
-
-  // Log Session States (Moved to top level to fix Rules of Hooks)
-  const [sessionRating, setSessionRating] = useState(0);
-  const [studentMood, setStudentMood] = useState<'Engaged' | 'Distracted' | 'Tired' | null>(null);
-  const [covered, setCovered] = useState('');
-  const [nextFocus, setNextFocus] = useState('');
-  const [selectedMilestones, setSelectedMilestones] = useState<string[]>([]);
-  const [aiBrainDump, setAiBrainDump] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
 
   // Student Detail View States (Moved to top level to fix Rules of Hooks)
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
@@ -7250,7 +7173,26 @@ export default function App() {
       </div>
     );
   };
-  const LogSessionView = () => {
+
+  const LogSessionView = memo(({ 
+    selectedStudent, 
+    selectedLesson, 
+    setView, 
+    currentUser,
+    db,
+    userProfile,
+    triggerNotification
+  }: any) => {
+    const [showAIGenerateSheet, setShowAIGenerateSheet] = useState(false);
+    const [aiBrainDump, setAiBrainDump] = useState('');
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [sessionSaveSuccess, setSessionSaveSuccess] = useState(false);
+    const [sessionRating, setSessionRating] = useState(0);
+    const [studentMood, setStudentMood] = useState<'Engaged' | 'Distracted' | 'Tired' | null>(null);
+    const [sessionCovered, setSessionCovered] = useState('');
+    const [sessionFocus, setSessionFocus] = useState('');
+    const [selectedMilestones, setSelectedMilestones] = useState<string[]>([]);
+
     if (!selectedStudent || !selectedLesson) return null;
 
     const handleAIGenerate = async () => {
@@ -7276,13 +7218,66 @@ export default function App() {
       }, 1500);
     };
 
-    const handleSave = () => {
-      handleSaveSession();
-      setSessionSaveSuccess(true);
-      setTimeout(() => {
-        setSessionSaveSuccess(false);
-        setView('home');
-      }, 2000);
+    const handleSave = async () => {
+      if (!selectedStudent || !selectedLesson || !currentUser) return;
+
+      try {
+        const logData = {
+          studentId: selectedStudent.id,
+          mentorId: currentUser.uid,
+          lessonNumber: selectedLesson.lessonNumber,
+          date: new Date().toISOString().split('T')[0],
+          covered: sessionCovered,
+          focus: sessionFocus,
+          milestones: selectedMilestones,
+          materials: [], // TODO: handle materials
+          rating: sessionRating,
+          mood: studentMood,
+          createdAt: serverTimestamp()
+        };
+
+        await addDoc(collection(db, 'sessionLogs'), logData);
+
+        // Bug 4: Calculate walletCredit and isPartOfPackage
+        const isPartOfPackage = selectedLesson.type === 'Package';
+        const walletCredit = isPartOfPackage 
+          ? (selectedLesson.price / (selectedLesson.totalLessons || 1)) 
+          : selectedLesson.price;
+
+        // Update lesson status to completed
+        await updateDoc(doc(db, 'lessons', selectedLesson.id), {
+          status: 'completed',
+          studentName: selectedStudent.name,
+          price: selectedLesson.price,
+          completedAt: serverTimestamp(),
+          walletCredit,
+          isPartOfPackage
+        });
+
+        // Trigger notifications
+        await triggerNotification(
+          'session_logged', 
+          'Session Logged', 
+          `${userProfile?.name || 'Mentor'} has added notes from your Lesson ${selectedLesson.lessonNumber}`
+        );
+
+        if (selectedMilestones.length > 0) {
+          await triggerNotification(
+            'milestone_completed', 
+            'Milestone Completed', 
+            `You've reached a new milestone in your ${selectedStudent.instrument} journey!`
+          );
+        }
+
+        setSessionSaveSuccess(true);
+        setTimeout(() => {
+          setSessionSaveSuccess(false);
+          setView('home');
+        }, 2000);
+
+      } catch (error) {
+        console.error("Error saving session log:", error);
+      }
     };
 
     return (
@@ -7410,11 +7405,11 @@ export default function App() {
                 </button>
               </div>
               <div className="flex flex-wrap gap-2">
-                {(selectedStudent.learningPath || []).map(m => (
+                {(selectedStudent.learningPath || []).map((m: any) => (
                   <button 
                     key={m.id}
                     onClick={() => {
-                      setSelectedMilestones(prev => 
+                      setSelectedMilestones((prev: string[]) => 
                         prev.includes(m.id) ? prev.filter(id => id !== m.id) : [...prev, m.id]
                       );
                     }}
@@ -7493,7 +7488,7 @@ export default function App() {
         </BottomSheet>
       </div>
     );
-  };
+  });
 
   const StudentDetailView = () => {
     if (!selectedStudent) return null;
@@ -7942,7 +7937,58 @@ export default function App() {
 
   // --- Main Render ---
 
-  const AIBuddySheet = () => {
+  const AIBuddySheet = memo(({ isOpen, onClose, isStudent, isNewUser }: { isOpen: boolean, onClose: () => void, isStudent: boolean, isNewUser: boolean }) => {
+    const [aiBuddyMessages, setAiBuddyMessages] = useState<{role: 'user' | 'assistant', content: string}[]>([]);
+    const [isAiBuddyTyping, setIsAiBuddyTyping] = useState(false);
+    const [aiBuddyInput, setAiBuddyInput] = useState('');
+
+    const handleAIBuddyAction = (action: string) => {
+      setAiBuddyMessages(prev => [...prev, { role: 'user', content: action }]);
+      setIsAiBuddyTyping(true);
+      
+      // Simulate AI response
+      setTimeout(() => {
+        let response = "";
+        if (isStudent) {
+          if (action === "What should I practice today?") {
+            response = "Based on your last lesson with Cikgu Aris, you should focus on smooth bow control and clean transitions between Sa–Ri–Ga. I recommend a 20-minute session: 5 mins warm-up, 10 mins bowing exercise, and 5 mins slow note transitions.";
+          } else if (action === "Summarize my last lesson") {
+            response = "In your last lesson, you covered basic bowing techniques and the Sa-Ri-Ga notes. Your mentor noted that your rhythm is improving, but you should keep practicing the transitions to make them smoother.";
+          } else if (action === "Explain my next milestone") {
+            response = "Your next milestone is 'Simple Rhythms'. This involves playing basic patterns consistently at 60 BPM. You're already 60% of the way there!";
+          } else if (action === "Motivate me for practice") {
+            response = "You've completed 2 milestones this week — great consistency! Remember, even 15 minutes of slow, clean practice today will make a huge difference. You've got this!";
+          } else if (action === "Show my latest materials") {
+            response = "Your mentor uploaded a 'Bowing Exercise PDF' and a 'Practice Guide' for your current stage. You can find them in the Growth tab!";
+          } else if (action === "What should I review before class?") {
+            response = "Before your next class with Cikgu Aris, review the 'Bowing Exercise PDF' and practice the Sa-Ri-Ga transitions at a slow tempo.";
+          } else if (action === "Create a 15-minute practice routine") {
+            response = "Here's a quick 15-minute routine: \n1. 3 mins: Open string bowing (focus on straight bow)\n2. 7 mins: Sa-Ri-Ga transitions (slow and clean)\n3. 5 mins: Review the 'Simple Rhythms' patterns.";
+          } else {
+            response = "I'm here to help you with your music journey! You can ask me about your practice, lessons, or materials.";
+          }
+        } else {
+          // Mentor logic
+          if (action === "Suggest a lesson summary") {
+            response = "Based on the session notes, I suggest: 'Today we focused on advanced bowing and complex rhythmic patterns. Student showed great improvement in Sa-Ri-Ga transitions but needs more work on 4-beat cycles.'";
+          } else if (action === "Draft a practice plan for Sarah") {
+            response = "Practice Plan for Sarah: 1. 5 min warm-up (Sa-Ri-Ga), 2. 10 min bow control exercise (4-beat cycles), 3. 5 min review of Lesson 3 patterns.";
+          } else if (action === "Analyze Marcus's progress") {
+            response = "Marcus has been consistent with his practice logs. He's currently at 80% completion for 'Rhythm Stability'. He might be ready for 'Advanced Scales' next week.";
+          } else if (action === "Recommend materials for next lesson") {
+            response = "For the next lesson on 'Advanced Scales', I recommend sharing the 'Scale Mastery PDF' and the 'Finger Placement Video'.";
+          } else if (action === "Draft an encouraging note") {
+            response = "Encouraging Note: 'Great job on mastering the basic striking! Your dedication is really showing. Let's keep this momentum going into the next stage!'";
+          } else {
+            response = "I'm your mentor assistant. I can help you draft summaries, plans, or analyze student progress.";
+          }
+        }
+        
+        setAiBuddyMessages(prev => [...prev, { role: 'assistant', content: response }]);
+        setIsAiBuddyTyping(false);
+      }, 1500);
+    };
+
     const studentPrompts = [
       "What should I practice today?",
       "Summarize my last lesson",
@@ -7966,8 +8012,8 @@ export default function App() {
 
     return (
       <BottomSheet 
-        isOpen={showAIBuddySheet} 
-        onClose={() => setShowAIBuddySheet(false)}
+        isOpen={isOpen} 
+        onClose={onClose}
       >
         <div className="flex flex-col h-[75vh] bg-zinc-50/50">
           {/* Header Info - Executive & Minimal */}
@@ -8101,7 +8147,7 @@ export default function App() {
                 onChange={(e) => setAiBuddyInput(e.target.value)}
                 onFocus={(e) => e.stopPropagation()}
                 placeholder={isStudent ? "Ask your music companion..." : "Ask your teaching assistant..."}
-                className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl py-4.5 pl-5 pr-14 text-sm focus:outline-none focus:border-zinc-900 focus:bg-white transition-all shadow-inner"
+                className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl py-4.5 pl-5 pr-14 text-sm focus:outline-none focus:border-zinc-900 focus:bg-white transition-all shadow-inner text-zinc-900 placeholder-zinc-400"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && aiBuddyInput.trim()) {
                     handleAIBuddyAction(aiBuddyInput);
@@ -8125,54 +8171,9 @@ export default function App() {
         </div>
       </BottomSheet>
     );
-  };
+  });
 
-  const handleAIBuddyAction = (action: string) => {
-    setAiBuddyMessages(prev => [...prev, { role: 'user', content: action }]);
-    setIsAiBuddyTyping(true);
-    
-    // Simulate AI response
-    setTimeout(() => {
-      let response = "";
-      if (isStudent) {
-        if (action === "What should I practice today?") {
-          response = "Based on your last lesson with Cikgu Aris, you should focus on smooth bow control and clean transitions between Sa–Ri–Ga. I recommend a 20-minute session: 5 mins warm-up, 10 mins bowing exercise, and 5 mins slow note transitions.";
-        } else if (action === "Summarize my last lesson") {
-          response = "In your last lesson, you covered basic bowing techniques and the Sa-Ri-Ga notes. Your mentor noted that your rhythm is improving, but you should keep practicing the transitions to make them smoother.";
-        } else if (action === "Explain my next milestone") {
-          response = "Your next milestone is 'Simple Rhythms'. This involves playing basic patterns consistently at 60 BPM. You're already 60% of the way there!";
-        } else if (action === "Motivate me for practice") {
-          response = "You've completed 2 milestones this week — great consistency! Remember, even 15 minutes of slow, clean practice today will make a huge difference. You've got this!";
-        } else if (action === "Show my latest materials") {
-          response = "Your mentor uploaded a 'Bowing Exercise PDF' and a 'Practice Guide' for your current stage. You can find them in the Growth tab!";
-        } else if (action === "What should I review before class?") {
-          response = "Before your next class with Cikgu Aris, review the 'Bowing Exercise PDF' and practice the Sa-Ri-Ga transitions at a slow tempo.";
-        } else if (action === "Create a 15-minute practice routine") {
-          response = "Here's a quick 15-minute routine: \n1. 3 mins: Open string bowing (focus on straight bow)\n2. 7 mins: Sa-Ri-Ga transitions (slow and clean)\n3. 5 mins: Review the 'Simple Rhythms' patterns.";
-        } else {
-          response = "I'm here to help you with your music journey! You can ask me about your practice, lessons, or materials.";
-        }
-      } else {
-        // Mentor logic
-        if (action === "Suggest a lesson summary") {
-          response = "Based on the session notes, I suggest: 'Today we focused on advanced bowing and complex rhythmic patterns. Student showed great improvement in Sa-Ri-Ga transitions but needs more work on 4-beat cycles.'";
-        } else if (action === "Draft a practice plan for Sarah") {
-          response = "Practice Plan for Sarah: 1. 5 min warm-up (Sa-Ri-Ga), 2. 10 min bow control exercise (4-beat cycles), 3. 5 min review of Lesson 3 patterns.";
-        } else if (action === "Analyze Marcus's progress") {
-          response = "Marcus has been consistent with his practice logs. He's currently at 80% completion for 'Rhythm Stability'. He might be ready for 'Advanced Scales' next week.";
-        } else if (action === "Recommend materials for next lesson") {
-          response = "For the next lesson on 'Advanced Scales', I recommend sharing the 'Scale Mastery PDF' and the 'Finger Placement Video'.";
-        } else if (action === "Draft an encouraging note") {
-          response = "Encouraging Note: 'Great job on mastering the basic striking! Your dedication is really showing. Let's keep this momentum going into the next stage!'";
-        } else {
-          response = "I'm your mentor assistant. I can help you draft summaries, plans, or analyze student progress.";
-        }
-      }
-      
-      setAiBuddyMessages(prev => [...prev, { role: 'assistant', content: response }]);
-      setIsAiBuddyTyping(false);
-    }, 1500);
-  };
+
 
   return (
     <div className={`h-screen font-sans transition-colors duration-500 overflow-hidden ${true ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'}`}>
@@ -8339,7 +8340,17 @@ export default function App() {
               {view === 'messages' && <MessagesView />}
               {view === 'wallet' && <WalletView />}
               {view === 'profile' && <ProfileView />}
-              {view === 'log-session' && <LogSessionView />}
+              {view === 'log-session' && (
+              <LogSessionView 
+                selectedStudent={selectedStudent}
+                selectedLesson={selectedLesson}
+                setView={setView}
+                currentUser={currentUser}
+                db={db}
+                userProfile={userProfile}
+                triggerNotification={triggerNotification}
+              />
+            )}
               {view === 'student-detail' && <StudentDetailView />}
             </motion.main>
           </AnimatePresence>
@@ -8854,7 +8865,12 @@ export default function App() {
                 />
               </motion.button>
 
-              <AIBuddySheet />
+              <AIBuddySheet 
+                isOpen={showAIBuddySheet} 
+                onClose={() => setShowAIBuddySheet(false)} 
+                isStudent={isStudent} 
+                isNewUser={isNewUser} 
+              />
             </>
           );
         })()

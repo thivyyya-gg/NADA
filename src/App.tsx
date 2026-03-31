@@ -273,6 +273,9 @@ interface Transaction {
   grossAmount: number;
   platformFee: number;
   netAmount: number;
+  isPartOfPackage?: boolean;
+  completedAt?: any;
+  status?: string;
 }
 
 interface Withdrawal {
@@ -2338,7 +2341,19 @@ export default function App() {
   ) => {
     if (!currentUser || !selectedMentor) return;
     
+    // Capitalize type for Bug 2
+    const capitalizedType = type.charAt(0).toUpperCase() + type.slice(1);
+    
     try {
+      const isPartOfPackage = type === 'package';
+      const price = type === 'trial' ? 0 : 
+                   type === 'single' ? selectedMentor.pricePerLesson : 
+                   selectedPackage?.price || 0;
+      const totalLessons = type === 'package' ? selectedPackage?.lessons : 1;
+      const walletCredit = isPartOfPackage 
+        ? (price / (totalLessons || 1)) 
+        : price;
+
       await addDoc(collection(db, 'lessons'), {
         studentId: currentUser.uid,
         studentName: userProfile?.name || currentUser.displayName || currentUser.email?.split('@')[0] || 'Student',
@@ -2347,11 +2362,13 @@ export default function App() {
         instrument: selectedMentor.specialisation[0] || '',
         date: bookingDate || '',
         time: bookingTime || '',
-        type: type,
+        type: capitalizedType,
         status: 'pending',
-        price: type === 'trial' ? 0 : 
-               type === 'single' ? 60 : 
-               selectedPackage?.price || 0,
+        price: price,
+        // Bug 4: Save totalLessons for packages
+        totalLessons: totalLessons,
+        walletCredit,
+        isPartOfPackage,
         studentNote: bookingNote || '',
         lessonNumber: 1,
         createdAt: serverTimestamp()
@@ -2385,9 +2402,20 @@ export default function App() {
 
       await addDoc(collection(db, 'sessionLogs'), logData);
 
+      // Bug 4: Calculate walletCredit and isPartOfPackage
+      const isPartOfPackage = selectedLesson.type === 'Package';
+      const walletCredit = isPartOfPackage 
+        ? (selectedLesson.price / (selectedLesson.totalLessons || 1)) 
+        : selectedLesson.price;
+
       // Update lesson status to completed
       await updateDoc(doc(db, 'lessons', selectedLesson.id), {
-        status: 'completed'
+        status: 'completed',
+        studentName: selectedStudent.name,
+        price: selectedLesson.price,
+        completedAt: serverTimestamp(),
+        walletCredit,
+        isPartOfPackage
       });
 
       // Trigger notifications
@@ -2488,28 +2516,35 @@ export default function App() {
     
     const q = query(
       collection(db, 'lessons'),
-      where('mentorId', '==', currentUser.uid),
-      where('status', '==', 'completed')
+      where('mentorId', '==', currentUser.uid)
     );
     
     const unsub = onSnapshot(q, (snap) => {
       const lessons = snap.docs.map(d => d.data());
+      // Include all lessons in balance as requested
       const total = lessons.reduce((sum, l) => 
-        sum + (l.price || 0), 0);
+        sum + (l.walletCredit ?? l.price ?? 0), 0);
       const platformFee = total * 0.1;
       setRealBalance(total - platformFee);
       setRealTransactions(
-        snap.docs.map(d => ({
-          id: d.id,
-          studentName: d.data().studentName,
-          date: d.data().date,
-          grossAmount: d.data().price,
-          platformFee: d.data().price * 0.1,
-          netAmount: d.data().price * 0.9,
-          lessonType: d.data().type,
-          studentPhoto: '',
-          studentId: d.data().studentId
-        }))
+        snap.docs.map(d => {
+          const data = d.data();
+          const amount = data.walletCredit ?? data.price ?? 0;
+          return {
+            id: d.id,
+            studentName: data.studentName,
+            date: data.date,
+            grossAmount: amount,
+            platformFee: amount * 0.1,
+            netAmount: amount * 0.9,
+            lessonType: data.type,
+            studentPhoto: '',
+            studentId: data.studentId,
+            isPartOfPackage: data.isPartOfPackage,
+            completedAt: data.completedAt,
+            status: data.status // Add status for UI
+          };
+        })
       );
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'lessons (mentor balance)');
@@ -5985,36 +6020,48 @@ export default function App() {
                         </div>
                       </div>
                     ) : (
-                      filteredTransactions.map(t => (
-                        <div key={t.id} className="bg-white border border-zinc-100 p-4 rounded-2xl shadow-sm">
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center gap-3">
-                              <Avatar name={t.studentName} photo={t.studentPhoto} size="sm" className="rounded-xl" />
-                              <div>
-                                <p className="text-[11px] font-bold text-zinc-900">{t.studentName}</p>
-                                <p className="text-[9px] text-zinc-400">{new Date(t.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} • {t.lessonType}</p>
+                      filteredTransactions.map(t => {
+                        const capitalizedType = t.lessonType.charAt(0).toUpperCase() + t.lessonType.slice(1);
+                        const displayDate = t.date || (t.completedAt?.toDate ? t.completedAt.toDate().toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
+                        
+                        return (
+                          <div key={t.id} className="bg-white border border-zinc-100 p-4 rounded-2xl shadow-sm">
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center gap-3">
+                                <Avatar name={t.studentName || 'Student'} photo={t.studentPhoto} size="sm" className="rounded-xl" />
+                                <div>
+                                  <p className="text-[11px] font-bold text-zinc-900">{t.studentName || 'Student'}</p>
+                                  <div className="flex items-center gap-2">
+                                    <p className="text-[9px] text-zinc-400">{new Date(displayDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} • {capitalizedType}</p>
+                                    {t.isPartOfPackage && (
+                                      <span className="bg-zinc-100 text-zinc-400 px-1.5 py-0.5 rounded text-[7px] font-bold uppercase tracking-widest">Part of package</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-sm font-bold text-zinc-900">+RM {t.netAmount.toFixed(2)}</p>
+                                <p className="text-[8px] text-zinc-400">Net after fee</p>
                               </div>
                             </div>
-                            <div className="text-right">
-                              <p className="text-sm font-bold text-zinc-900">+RM {t.netAmount.toFixed(2)}</p>
-                              <p className="text-[8px] text-zinc-400">Net after fee</p>
+                            <div className="flex items-center justify-between pt-3 border-t border-zinc-50">
+                              <div className="flex gap-4">
+                                <div className="flex flex-col">
+                                  <span className="text-[8px] uppercase tracking-widest text-zinc-300 font-bold">Gross</span>
+                                  <span className="text-[10px] font-mono text-zinc-500">RM {t.grossAmount.toFixed(2)}</span>
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="text-[8px] uppercase tracking-widest text-zinc-300 font-bold">Fee</span>
+                                  <span className="text-[10px] font-mono text-zinc-500">-RM {t.platformFee.toFixed(2)}</span>
+                                </div>
+                              </div>
+                              <Badge variant={t.status === 'completed' ? 'default' : 'outline'}>
+                                {t.status ? t.status.charAt(0).toUpperCase() + t.status.slice(1) : 'Completed'}
+                              </Badge>
                             </div>
                           </div>
-                          <div className="flex items-center justify-between pt-3 border-t border-zinc-50">
-                            <div className="flex gap-4">
-                              <div className="flex flex-col">
-                                <span className="text-[8px] uppercase tracking-widest text-zinc-300 font-bold">Gross</span>
-                                <span className="text-[10px] font-mono text-zinc-500">RM {t.grossAmount.toFixed(2)}</span>
-                              </div>
-                              <div className="flex flex-col">
-                                <span className="text-[8px] uppercase tracking-widest text-zinc-300 font-bold">Fee</span>
-                                <span className="text-[10px] font-mono text-zinc-500">-RM {t.platformFee.toFixed(2)}</span>
-                              </div>
-                            </div>
-                            <Badge variant="outline">Completed</Badge>
-                          </div>
-                        </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
                 );
@@ -8111,7 +8158,8 @@ export default function App() {
           </AnimatePresence>
 
           {/* Mobile Nav */}
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 w-[90%]">
+          {view !== 'student-detail' && (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 w-[90%]">
             <div className="backdrop-blur-2xl border rounded-[2rem] px-2 py-1.5 flex items-center justify-between shadow-2xl transition-all duration-500 bg-zinc-900/90 border-white/10">
               {[
                 { id: 'home', icon: HomeIcon, label: 'Home' },
@@ -8144,6 +8192,7 @@ export default function App() {
               ))}
             </div>
           </div>
+        )}
         </>
       )}
 

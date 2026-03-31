@@ -216,6 +216,8 @@ interface Student {
   stage: string;
   lessonsRemaining: number;
   lastLesson: string;
+  lastSession?: string;
+  nextSession?: string;
   package: 'Trial' | 'Single' | 'Package 8' | 'Package 12' | 'Monthly';
   photo: string;
   progress: number;
@@ -319,6 +321,8 @@ const MOCK_STUDENTS: Student[] = [
     stage: 'Stage 2 — Developing', 
     lessonsRemaining: 4, 
     lastLesson: '2024-03-12', 
+    lastSession: '2 days ago',
+    nextSession: 'Tomorrow, 4:00 PM',
     package: 'Package 8', 
     photo: 'https://picsum.photos/seed/woman5/200', 
     progress: 45,
@@ -340,6 +344,8 @@ const MOCK_STUDENTS: Student[] = [
     stage: 'Stage 3 — Progressing', 
     lessonsRemaining: 1, 
     lastLesson: '2024-03-14', 
+    lastSession: 'Yesterday',
+    nextSession: 'Thursday, 5:30 PM',
     package: 'Single', 
     photo: 'https://picsum.photos/seed/man9/200', 
     progress: 75, 
@@ -360,6 +366,8 @@ const MOCK_STUDENTS: Student[] = [
     stage: 'Stage 1 — Foundation', 
     lessonsRemaining: 12, 
     lastLesson: '2024-03-10', 
+    lastSession: '1 week ago',
+    nextSession: 'Saturday, 10:00 AM',
     package: 'Monthly', 
     photo: 'https://picsum.photos/seed/woman6/200', 
     progress: 15, 
@@ -417,6 +425,25 @@ const MOCK_STUDENTS: Student[] = [
     aboutMe: "Fascinated by Indian rhythms.",
     learningPath: []
   },
+  { 
+    id: 's7', 
+    name: 'Zhi Wei', 
+    email: 'zhi.w@example.com',
+    instrument: 'Pipa', 
+    stage: 'Stage 3 — Progressing', 
+    lessonsRemaining: 3, 
+    lastLesson: '2024-03-20', 
+    package: 'Package 12', 
+    photo: 'https://picsum.photos/seed/man18/200', 
+    progress: 65, 
+    totalLessons: 12,
+    aboutMe: "I've been playing Pipa for a few years and want to improve my speed and precision.",
+    learningPath: [
+      { id: 'm1', title: 'Stage 1 — Foundation', status: 'completed', description: 'Basic plucking, Tuning, Simple melodies' },
+      { id: 'm2', title: 'Stage 2 — Developing', status: 'completed', description: 'Intermediate techniques, Traditional songs' },
+      { id: 'm3', title: 'Stage 3 — Progressing', status: 'current', description: 'Advanced techniques, Complex rhythms' },
+    ]
+  }
 ];
 
 const MOCK_SESSION_LOGS: SessionLog[] = [
@@ -2086,8 +2113,61 @@ export default function App() {
   const handleSendMessage = async (text: string) => {
     if (!currentUser || !selectedChat || !text.trim()) return;
 
-    const conversationId = selectedChat.conversationId || selectedChat.id;
+    let conversationId = selectedChat.conversationId;
     const trimmedText = text.trim();
+
+    // If it's a new conversation, we need to create it first
+    if (!conversationId) {
+      try {
+        const otherParticipantId = selectedChat.recipientId;
+        if (!otherParticipantId) return;
+
+        // Check if conversation already exists (double check)
+        const existingConv = conversations.find(c => c.participants.includes(otherParticipantId));
+        if (existingConv) {
+          conversationId = existingConv.id;
+        } else {
+          // Create new conversation
+          const participants = [currentUser.uid, otherParticipantId];
+          const participantDetails: any = {};
+          
+          // Current user details
+          const myProfile = isStudent ? studentProfile : mentorProfile;
+          participantDetails[currentUser.uid] = {
+            name: myProfile.name || 'User',
+            photo: myProfile.photo || null,
+            role: isStudent ? 'Student' : 'Mentor'
+          };
+
+          // Other participant details
+          participantDetails[otherParticipantId] = {
+            name: selectedChat.name,
+            photo: selectedChat.photo,
+            role: selectedChat.role || (isStudent ? 'Mentor' : 'Student')
+          };
+
+          const newConvRef = await addDoc(collection(db, 'conversations'), {
+            participants,
+            participantDetails,
+            lastMessage: trimmedText,
+            lastMessageAt: serverTimestamp(),
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+          conversationId = newConvRef.id;
+          
+          // Update selectedChat so subsequent messages use the new ID
+          setSelectedChat({
+            ...selectedChat,
+            conversationId: conversationId,
+            id: conversationId
+          });
+        }
+      } catch (error) {
+        console.error("Error creating conversation:", error);
+        return;
+      }
+    }
 
     // Optimistic UI update
     const optimisticMessage = {
@@ -3729,13 +3809,26 @@ export default function App() {
 
                   <div className="flex gap-3">
                     <button 
-                      onClick={() => setShowRescheduleModal(true)}
+                      onClick={() => {
+                        setSelectedChat({
+                          id: `new-${mentor.id}`,
+                          conversationId: null,
+                          name: mentor.name,
+                          photo: mentor.photo,
+                          role: 'Mentor',
+                          recipientId: mentor.id
+                        });
+                        switchStudentTab('messages');
+                      }}
                       className="flex-1 py-4 bg-zinc-900 text-white text-[10px] font-bold uppercase tracking-widest rounded-full shadow-lg shadow-black/10 transition-transform active:scale-95"
                     >
-                      Reschedule
+                      Message Mentor
                     </button>
-                    <button className="flex-1 py-4 border border-zinc-200 text-zinc-900 text-[10px] font-bold uppercase tracking-widest rounded-full transition-colors hover:bg-zinc-50 active:scale-95">
-                      Cancel
+                    <button 
+                      onClick={() => setShowRescheduleModal(true)}
+                      className="flex-1 py-4 border border-zinc-200 text-zinc-900 text-[10px] font-bold uppercase tracking-widest rounded-full transition-colors hover:bg-zinc-50 active:scale-95"
+                    >
+                      Reschedule
                     </button>
                   </div>
                 </div>
@@ -4094,11 +4187,39 @@ export default function App() {
       return <ChatConversation recipient={selectedChat} onBack={() => setSelectedChat(null)} dark={dark} />;
     }
 
+    const bookedMentors = studentLessons.reduce((acc: any[], lesson) => {
+      if (!acc.find(m => m.id === lesson.mentorId)) {
+        acc.push({
+          id: lesson.mentorId,
+          name: lesson.mentorName,
+          photo: null, // We'll try to find the photo from realMentors or MOCK_MENTORS
+          role: 'Mentor'
+        });
+      }
+      return acc;
+    }, []);
+
+    const mentorsToDisplay = bookedMentors.map(m => {
+      const mentorDetails = realMentors.find(rm => rm.id === m.id) || MOCK_MENTORS.find(mm => mm.id === m.id);
+      return {
+        ...m,
+        photo: mentorDetails?.photo || null
+      };
+    });
+
+    const mentorsWithoutChat = mentorsToDisplay.filter(m => {
+      return !conversations.some(conv => conv.participants.includes(m.id));
+    });
+
     const filteredConversations = conversations.filter(conv => {
       const otherParticipantId = conv.participants.find((p: string) => p !== currentUser?.uid);
       const details = conv.participantDetails[otherParticipantId];
       return details?.name?.toLowerCase().includes(searchQuery.toLowerCase());
     });
+
+    const filteredMentorsWithoutChat = mentorsWithoutChat.filter(m => 
+      m.name.toLowerCase().includes(searchQuery.toLowerCase())
+    );
 
     return (
       <div className={`h-full flex flex-col pt-16 ${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'}`}>
@@ -4116,59 +4237,95 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 space-y-3 pb-32">
-          {filteredConversations.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center px-10 relative">
-              <div className="absolute inset-0 bg-harbour-500/5 blur-[100px] rounded-full" />
-              <div className="relative z-10">
-                <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-6 mx-auto ${dark ? 'bg-white/5' : 'bg-black/5'}`}>
-                  <MessageSquare size={32} className={dark ? 'text-white/20' : 'text-zinc-300'} />
-                </div>
-                <h3 className="text-lg font-serif-sturdy mb-2">No messages yet</h3>
-                <p className={`text-xs leading-relaxed ${dark ? 'text-white/40' : 'text-zinc-500'}`}>
-                  {searchQuery ? "We couldn't find any mentors matching your search." : "Your musical journey starts with a conversation. Reach out to a mentor to begin."}
-                </p>
-              </div>
-            </div>
-          ) : (
-            filteredConversations.map((conv) => {
-              const otherParticipantId = conv.participants.find((p: string) => p !== currentUser?.uid);
-              const details = conv.participantDetails[otherParticipantId];
-              
-              return (
-                <motion.div 
-                  key={conv.id} 
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => setSelectedChat({
-                    id: conv.id,
-                    conversationId: conv.id,
-                    name: details.name,
-                    photo: details.photo,
-                    role: details.role
-                  })}
-                  className={`p-4 rounded-3xl border transition-all cursor-pointer ${dark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-100 shadow-sm hover:border-zinc-200'}`}
-                >
-                  <div className="flex items-center gap-4">
+        <div className="flex-1 overflow-y-auto px-5 space-y-6 pb-32">
+          {filteredMentorsWithoutChat.length > 0 && (
+            <section className="space-y-3">
+              <h2 className={`text-[10px] font-bold uppercase tracking-widest ${dark ? 'text-white/30' : 'text-zinc-400'}`}>Your Mentors</h2>
+              <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide">
+                {filteredMentorsWithoutChat.map(mentor => (
+                  <motion.div
+                    key={mentor.id}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setSelectedChat({
+                      id: `new-${mentor.id}`,
+                      conversationId: null,
+                      name: mentor.name,
+                      photo: mentor.photo,
+                      role: mentor.role,
+                      recipientId: mentor.id
+                    })}
+                    className="flex flex-col items-center gap-2 min-w-[80px]"
+                  >
                     <div className="relative">
-                      <img src={details.photo || null} className="w-12 h-12 rounded-2xl object-cover" referrerPolicy="no-referrer" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-start mb-1">
-                        <div className="flex items-center gap-2">
-                          <h3 className="text-sm font-bold truncate">{details.name}</h3>
-                          <span className="px-1.5 py-0.5 bg-harbour-500/10 text-harbour-400 text-[7px] font-bold rounded uppercase tracking-widest">{details.role}</span>
-                        </div>
-                        <span className={`text-[8px] font-mono ${dark ? 'text-white/30' : 'text-zinc-400'}`}>
-                          {conv.lastMessageAt?.toDate ? conv.lastMessageAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                        </span>
+                      <Avatar name={mentor.name} photo={mentor.photo} size="lg" className="rounded-2xl border-2 border-harbour-500/20" />
+                      <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-harbour-500 rounded-full flex items-center justify-center border-2 border-atmospheric-dark">
+                        <Plus size={10} className="text-white" />
                       </div>
-                      <p className={`text-[11px] truncate ${dark ? 'text-white/40' : 'text-zinc-500'}`}>{conv.lastMessage || ''}</p>
                     </div>
-                  </div>
-                </motion.div>
-              );
-            })
+                    <span className="text-[10px] font-bold truncate w-full text-center">{mentor.name.split(' ')[0]}</span>
+                  </motion.div>
+                ))}
+              </div>
+            </section>
           )}
+
+          <section className="space-y-3">
+            <h2 className={`text-[10px] font-bold uppercase tracking-widest ${dark ? 'text-white/30' : 'text-zinc-400'}`}>Recent Chats</h2>
+            {filteredConversations.length === 0 && filteredMentorsWithoutChat.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-center px-10 py-20 relative">
+                <div className="absolute inset-0 bg-harbour-500/5 blur-[100px] rounded-full" />
+                <div className="relative z-10">
+                  <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-6 mx-auto ${dark ? 'bg-white/5' : 'bg-black/5'}`}>
+                    <MessageSquare size={32} className={dark ? 'text-white/20' : 'text-zinc-300'} />
+                  </div>
+                  <h3 className="text-lg font-serif-sturdy mb-2">No messages yet</h3>
+                  <p className={`text-xs leading-relaxed ${dark ? 'text-white/40' : 'text-zinc-500'}`}>
+                    {searchQuery ? "We couldn't find any mentors matching your search." : "Your musical journey starts with a conversation. Reach out to a mentor to begin."}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {filteredConversations.map((conv) => {
+                  const otherParticipantId = conv.participants.find((p: string) => p !== currentUser?.uid);
+                  const details = conv.participantDetails[otherParticipantId];
+                  
+                  return (
+                    <motion.div 
+                      key={conv.id} 
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => setSelectedChat({
+                        id: conv.id,
+                        conversationId: conv.id,
+                        name: details.name,
+                        photo: details.photo,
+                        role: details.role
+                      })}
+                      className={`p-4 rounded-3xl border transition-all cursor-pointer ${dark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-zinc-100 shadow-sm hover:border-zinc-200'}`}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="relative">
+                          <img src={details.photo || null} className="w-12 h-12 rounded-2xl object-cover" referrerPolicy="no-referrer" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex justify-between items-start mb-1">
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-sm font-bold truncate">{details.name}</h3>
+                              <span className="px-1.5 py-0.5 bg-harbour-500/10 text-harbour-400 text-[7px] font-bold rounded uppercase tracking-widest">{details.role}</span>
+                            </div>
+                            <span className={`text-[8px] font-mono ${dark ? 'text-white/30' : 'text-zinc-400'}`}>
+                              {conv.lastMessageAt?.toDate ? conv.lastMessageAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                            </span>
+                          </div>
+                          <p className={`text-[11px] truncate ${dark ? 'text-white/40' : 'text-zinc-500'}`}>{conv.lastMessage || ''}</p>
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
         </div>
       </div>
     );
@@ -5789,9 +5946,39 @@ export default function App() {
                     />
                   </div>
                   
-                  <div className="flex justify-between items-center pt-2 border-t border-zinc-50">
-                    <span className="text-[10px] font-bold text-zinc-400">{student.package}</span>
-                    <span className="text-[10px] font-bold text-harbour-600">{student.lessonsRemaining} lessons left</span>
+                  <div className="grid grid-cols-2 gap-3 py-3 border-y border-zinc-50">
+                    <div>
+                      <p className="text-[8px] font-bold uppercase tracking-widest text-zinc-400 mb-1">Last Session</p>
+                      <p className="text-[10px] font-medium text-zinc-600">{student.lastSession || 'None'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[8px] font-bold uppercase tracking-widest text-zinc-400 mb-1">Next Session</p>
+                      <p className="text-[10px] font-bold text-harbour-600">{student.nextSession || 'Not scheduled'}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between items-center pt-2">
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-bold text-zinc-900">{student.package}</span>
+                      <span className="text-[9px] font-medium text-zinc-400">{student.lessonsRemaining} lessons left</span>
+                    </div>
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedChat({
+                          id: `new-${student.id}`,
+                          conversationId: null,
+                          name: student.name,
+                          photo: student.photo,
+                          role: 'Student',
+                          recipientId: student.id
+                        });
+                        setView('messages');
+                      }}
+                      className="w-10 h-10 rounded-full bg-zinc-900 text-white flex items-center justify-center shadow-lg shadow-black/10 transition-transform active:scale-90"
+                    >
+                      <MessageSquare size={16} />
+                    </button>
                   </div>
                 </div>
               </motion.div>

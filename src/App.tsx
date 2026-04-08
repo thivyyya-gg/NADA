@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, memo } from 'react';
+import { GoogleGenAI } from "@google/genai";
 import { 
   Music2, 
   ChevronRight, 
@@ -66,7 +67,8 @@ import {
   Target,
   MessageCircle,
   Volume2,
-  Eye
+  Eye,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -148,6 +150,8 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
 // --- Types ---
 
@@ -2568,12 +2572,12 @@ export default function App() {
     return () => unsub();
   }, [currentUser, isStudent, userProfile]);
 
-  const triggerNotification = async (type: string, title: string, body: string) => {
-    if (!notificationsEnabled || !currentUser) return;
+  const triggerNotification = async (targetUserId: string, type: string, title: string, body: string) => {
+    if (!notificationsEnabled) return;
     
     try {
       await addDoc(collection(db, 'notifications'), {
-        userId: currentUser.uid,
+        userId: targetUserId,
         type,
         title,
         body,
@@ -2584,7 +2588,96 @@ export default function App() {
       console.error("Error triggering notification:", error);
     }
   };
-  const [userRole, setUserRole] = useState<'student' | 'mentor' | null>(null);
+  const handleRescheduleRequest = async (lesson: any, newDate: string, newTime: string) => {
+    if (!currentUser) return;
+    try {
+      await updateDoc(doc(db, 'lessons', lesson.id), {
+        status: 'reschedule_requested',
+        requestedDate: newDate,
+        requestedTime: newTime,
+        requestedBy: currentUser.uid,
+        updatedAt: serverTimestamp()
+      });
+
+      const targetId = currentUser.uid === lesson.studentId ? lesson.mentorId : lesson.studentId;
+      const requesterName = userProfile?.name || 'Your partner';
+      await triggerNotification(
+        targetId,
+        'reschedule_requested',
+        'Reschedule Requested',
+        `${requesterName} requested to reschedule your lesson to ${new Date(newDate).toLocaleDateString()} at ${newTime}.`
+      );
+      
+      setShowRescheduleModal(false);
+      setReschedulingLesson(null);
+    } catch (error) {
+      console.error("Error requesting reschedule:", error);
+    }
+  };
+
+  const handleRescheduleAction = async (lesson: any, action: 'accept' | 'decline') => {
+    if (!currentUser) return;
+    try {
+      if (action === 'accept') {
+        await updateDoc(doc(db, 'lessons', lesson.id), {
+          date: lesson.requestedDate,
+          time: lesson.requestedTime,
+          status: 'confirmed',
+          requestedDate: null,
+          requestedTime: null,
+          requestedBy: null,
+          updatedAt: serverTimestamp()
+        });
+
+        const targetId = currentUser.uid === lesson.studentId ? lesson.mentorId : lesson.studentId;
+        await triggerNotification(
+          targetId,
+          'reschedule_accepted',
+          'Reschedule Accepted',
+          `Your reschedule request for ${new Date(lesson.requestedDate).toLocaleDateString()} has been accepted.`
+        );
+      } else {
+        await updateDoc(doc(db, 'lessons', lesson.id), {
+          status: 'confirmed',
+          requestedDate: null,
+          requestedTime: null,
+          requestedBy: null,
+          updatedAt: serverTimestamp()
+        });
+
+        const targetId = currentUser.uid === lesson.studentId ? lesson.mentorId : lesson.studentId;
+        await triggerNotification(
+          targetId,
+          'reschedule_declined',
+          'Reschedule Declined',
+          `Your reschedule request has been declined. The original time remains.`
+        );
+      }
+    } catch (error) {
+      console.error("Error handling reschedule action:", error);
+    }
+  };
+
+  const handleCancelLesson = async (lesson: any) => {
+    if (!currentUser) return;
+    try {
+      await updateDoc(doc(db, 'lessons', lesson.id), {
+        status: 'cancelled',
+        updatedAt: serverTimestamp()
+      });
+
+      const targetId = currentUser.uid === lesson.studentId ? lesson.mentorId : lesson.studentId;
+      const cancellerName = userProfile?.name || 'Your partner';
+      await triggerNotification(
+        targetId,
+        'lesson_cancelled',
+        'Lesson Cancelled',
+        `Your lesson with ${cancellerName} has been cancelled.`
+      );
+    } catch (error) {
+      console.error("Error cancelling lesson:", error);
+    }
+  };
   const [splashIndex, setSplashIndex] = useState(0);
   const profileProgress = calculateProfileProgress(mentorProfile);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
@@ -2609,6 +2702,9 @@ export default function App() {
 
   // Bottom Sheet States
   const [showScheduleSheet, setShowScheduleSheet] = useState(false);
+  const [showAllLessonsSheet, setShowAllLessonsSheet] = useState(false);
+  const [showCredentialsSheet, setShowCredentialsSheet] = useState(false);
+  const [selectedLessonDetails, setSelectedLessonDetails] = useState<any | null>(null);
   const [showBookingSheet, setShowBookingSheet] = useState(false);
   const [showPaymentSheet, setShowPaymentSheet] = useState(false);
   const [showAIGenerateSheet, setShowAIGenerateSheet] = useState(false);
@@ -2683,8 +2779,11 @@ export default function App() {
   // Student Journey View States
   const [journeyTab, setJourneyTab] = useState<'lessons' | 'progress'>('lessons');
   const [selectedInstrumentJourney, setSelectedInstrumentJourney] = useState('Gambus');
-  const [expandedLesson, setExpandedLesson] = useState<number | null>(null);
+  const [expandedLesson, setExpandedLesson] = useState<string | null>(null);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
+  const [reschedulingLesson, setReschedulingLesson] = useState<any | null>(null);
+  const [selectedRescheduleDate, setSelectedRescheduleDate] = useState<string | null>(null);
+  const [selectedRescheduleTime, setSelectedRescheduleTime] = useState<string | null>(null);
 
   // Auth View States
   const [roleTab, setRoleTab] = useState<'student' | 'mentor'>('student');
@@ -3345,9 +3444,9 @@ export default function App() {
         <div className="px-5 mt-8 space-y-8">
           <div className={`flex justify-between p-4 border rounded-3xl ${dark ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
             {[
-              { label: 'Students', value: selectedMentor.studentsCount, icon: Users },
-              { label: 'Reviews', value: selectedMentor.reviewCount, icon: MessageSquare },
-              { label: 'Experience', value: `${selectedMentor.experienceYears}y`, icon: Award }
+              { label: 'Students', value: selectedMentor.studentsCount || 24, icon: Users },
+              { label: 'Reviews', value: selectedMentor.reviewCount || 158, icon: MessageSquare },
+              { label: 'Experience', value: `${selectedMentor.experienceYears || 8}y`, icon: Award }
             ].map((stat) => (
               <div key={stat.label} className="text-center">
                 <p className={`text-[8px] font-mono uppercase tracking-widest mb-1 ${dark ? 'text-white/30' : 'text-zinc-500'}`}>{stat.label}</p>
@@ -3598,7 +3697,13 @@ export default function App() {
     const currentStudent = userProfile || MOCK_STUDENTS[0];
     const mentor = realMentors.find(m => m.id === studentLessons[0]?.mentorId) || MOCK_MENTORS[0];
 
-    const upcomingLesson = studentLessons.find(l => l.status === 'confirmed' && new Date(l.date) >= new Date());
+    const upcomingLesson = studentLessons
+      .filter(l => 
+        (l.status === 'confirmed' || l.status === 'pending' || l.status === 'reschedule_requested') && 
+        new Date(l.date) >= new Date(new Date().setHours(0,0,0,0)) && 
+        l.instrument === selectedInstrumentJourney
+      )
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0];
     
     // Dynamic instruments based on student's active lessons
     const activeInstruments = Array.from(new Set(studentLessons.map(l => l.instrument).filter(Boolean)));
@@ -3618,15 +3723,40 @@ export default function App() {
     };
 
     // Map logs to a more detailed format for the UI
-    const pastLessons = studentLogs.map((log, index) => ({
-      id: log.lessonNumber,
-      date: new Date(log.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-      review: log.covered,
-      focus: log.focus,
-      milestones: log.milestones || [],
-      encouragement: "Solid progress today.",
-      isLatest: index === 0
-    })).sort((a, b) => b.id - a.id);
+    const filteredLogs = studentLogs.filter(log => log.instrument === selectedInstrumentJourney);
+    const pastLessons = [
+      ...filteredLogs.map((log, index) => ({
+        id: log.id || `log-${index}`,
+        lessonNumber: log.lessonNumber,
+        date: new Date(log.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        review: log.covered,
+        focus: log.focus,
+        milestones: log.milestones || [],
+        encouragement: "Solid progress today.",
+        isLatest: index === 0
+      })),
+      // Mock logs for visualization
+      {
+        id: 'mock-1',
+        lessonNumber: filteredLogs.length + 2,
+        date: '15 Mar 2026',
+        review: 'Mastered the basic striking patterns and rhythm coordination.',
+        focus: 'Focus on maintaining consistent tempo during transitions.',
+        milestones: ['m1'],
+        encouragement: "You're picking this up very quickly!",
+        isLatest: false
+      },
+      {
+        id: 'mock-2',
+        lessonNumber: filteredLogs.length + 1,
+        date: '08 Mar 2026',
+        review: 'Introduction to the instrument and basic posture.',
+        focus: 'Practice holding the instrument correctly for 15 mins daily.',
+        milestones: [],
+        encouragement: "Welcome to your musical journey!",
+        isLatest: false
+      }
+    ].sort((a, b) => (b.lessonNumber || 0) - (a.lessonNumber || 0));
 
     const studentProfile_lp = (currentStudent as any)?.learningPath;
     const hasLearningPath = Array.isArray(studentProfile_lp) && studentProfile_lp.length > 0;
@@ -3702,22 +3832,68 @@ export default function App() {
             <section className="space-y-4">
               <div className="flex items-center justify-between px-2">
                 <h2 className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400">Upcoming Session</h2>
+                <button 
+                  onClick={() => setShowAllLessonsSheet(true)}
+                  className="text-[10px] font-bold text-teal-600 flex items-center gap-1 hover:opacity-70 transition-opacity"
+                >
+                  See all <ChevronRight size={12} />
+                </button>
               </div>
 
               {upcomingLesson ? (
                 <div className="bg-white border border-zinc-100 rounded-[2.5rem] p-6 shadow-xl shadow-teal-500/5 relative overflow-hidden">
                   <div className="flex justify-between items-start mb-6">
                     <div className="flex gap-4 items-center">
-                      <Avatar name={upcomingLesson.mentorName} photo={mentor.photo} size="md" className="rounded-xl shadow-md" />
+                      <Avatar name={upcomingLesson.mentorName} photo={realMentors.find(m => m.id === upcomingLesson.mentorId)?.photo || mentor.photo} size="md" className="rounded-xl shadow-md" />
                       <div>
                         <h3 className="font-serif text-lg text-zinc-900">{upcomingLesson.mentorName}</h3>
-                        <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-400">{upcomingLesson.instrument} • Lesson #{studentLogs.length + 1}</p>
+                        <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-400">{upcomingLesson.instrument} • Lesson #{filteredLogs.length + 1}</p>
                       </div>
                     </div>
-                    <div className="bg-teal-500 text-white px-3 py-1.5 rounded-full text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5">
-                      <Clock size={10} /> {Math.ceil((new Date(upcomingLesson.date).getTime() - new Date().getTime()) / 86400000)} Days Away
+                    <div className="flex flex-col items-end gap-2">
+                      <div className={`px-3 py-1.5 rounded-full text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5 ${
+                        upcomingLesson.status === 'confirmed' ? 'bg-emerald-500 text-white' : 
+                        upcomingLesson.status === 'reschedule_requested' ? 'bg-indigo-500 text-white' :
+                        'bg-amber-500 text-white'
+                      }`}>
+                        {upcomingLesson.status === 'confirmed' ? <CheckCircle2 size={10} /> : <Clock size={10} />}
+                        {upcomingLesson.status.replace('_', ' ')}
+                      </div>
+                      <div className="text-[8px] font-bold text-zinc-400 uppercase tracking-widest">
+                        {Math.ceil((new Date(upcomingLesson.date).getTime() - new Date().getTime()) / 86400000)} Days Away
+                      </div>
                     </div>
                   </div>
+
+                  {upcomingLesson.status === 'reschedule_requested' && upcomingLesson.requestedBy !== currentUser?.uid && (
+                    <div className="mb-6 p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
+                      <p className="text-[10px] font-bold text-indigo-900 mb-2">Reschedule Request</p>
+                      <p className="text-[10px] text-indigo-700 mb-3">
+                        Requested for: <span className="font-bold">{new Date(upcomingLesson.requestedDate).toLocaleDateString()} at {upcomingLesson.requestedTime}</span>
+                      </p>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => handleRescheduleAction(upcomingLesson, 'accept')}
+                          className="flex-1 py-2 bg-indigo-600 text-white text-[9px] font-bold uppercase tracking-widest rounded-lg"
+                        >
+                          Accept
+                        </button>
+                        <button 
+                          onClick={() => handleRescheduleAction(upcomingLesson, 'decline')}
+                          className="flex-1 py-2 bg-white border border-indigo-200 text-indigo-600 text-[9px] font-bold uppercase tracking-widest rounded-lg"
+                        >
+                          Decline
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {upcomingLesson.status === 'reschedule_requested' && upcomingLesson.requestedBy === currentUser?.uid && (
+                    <div className="mb-6 p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                      <p className="text-[10px] font-bold text-zinc-500">Reschedule Pending</p>
+                      <p className="text-[10px] text-zinc-400">Waiting for mentor to confirm your request for {new Date(upcomingLesson.requestedDate).toLocaleDateString()} at {upcomingLesson.requestedTime}.</p>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-2 gap-3 mb-6">
                     <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100">
@@ -3733,25 +3909,39 @@ export default function App() {
                   <div className="flex gap-3">
                     <button 
                       onClick={() => {
+                        const mentorObj = realMentors.find(m => m.id === upcomingLesson.mentorId) || mentor;
                         setSelectedChat({
-                          id: `new-${mentor.id}`,
+                          id: `new-${mentorObj.id}`,
                           conversationId: null,
-                          name: mentor.name,
-                          photo: mentor.photo,
+                          name: mentorObj.name,
+                          photo: mentorObj.photo,
                           role: 'Mentor',
-                          recipientId: mentor.id
+                          recipientId: mentorObj.id
                         });
                         switchStudentTab('messages');
                       }}
                       className="flex-1 py-4 bg-zinc-900 text-white text-[10px] font-bold uppercase tracking-widest rounded-full shadow-lg shadow-black/10 transition-transform active:scale-95"
                     >
-                      Message Mentor
+                      Message
                     </button>
                     <button 
-                      onClick={() => setShowRescheduleModal(true)}
+                      onClick={() => {
+                        setReschedulingLesson(upcomingLesson);
+                        setShowRescheduleModal(true);
+                      }}
                       className="flex-1 py-4 border border-zinc-200 text-zinc-900 text-[10px] font-bold uppercase tracking-widest rounded-full transition-colors hover:bg-zinc-50 active:scale-95"
                     >
                       Reschedule
+                    </button>
+                    <button 
+                      onClick={() => {
+                        if (window.confirm('Are you sure you want to cancel this session?')) {
+                          handleCancelLesson(upcomingLesson);
+                        }
+                      }}
+                      className="w-12 h-12 flex items-center justify-center border border-red-100 text-red-500 rounded-full hover:bg-red-50 transition-colors"
+                    >
+                      <X size={18} />
                     </button>
                   </div>
                 </div>
@@ -3761,7 +3951,7 @@ export default function App() {
                     <Calendar size={24} />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-zinc-900">No upcoming sessions</p>
+                    <p className="text-sm font-bold text-zinc-900">No upcoming {selectedInstrumentJourney} sessions</p>
                     <p className="text-[10px] text-zinc-400 mt-1">Ready to continue your journey?</p>
                   </div>
                   <button 
@@ -3778,7 +3968,15 @@ export default function App() {
             <section className="space-y-4">
               <div className="flex items-center justify-between px-2">
                 <h2 className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400">Past Lessons Log</h2>
-                <span className="bg-zinc-100 text-zinc-500 px-2.5 py-1 rounded-full text-[9px] font-bold">{pastLessons.length} Lessons</span>
+                <div className="flex items-center gap-3">
+                  <span className="bg-zinc-100 text-zinc-500 px-2.5 py-1 rounded-full text-[9px] font-bold">{pastLessons.length} Lessons</span>
+                  <button 
+                    onClick={() => setShowAllLessonsSheet(true)}
+                    className="text-[10px] font-bold text-teal-600 flex items-center gap-1 hover:opacity-70 transition-opacity"
+                  >
+                    See all <ChevronRight size={12} />
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-3">
@@ -3795,7 +3993,7 @@ export default function App() {
                   return (
                     <div key={lesson.id} className={`bg-white border border-zinc-100 rounded-[2rem] transition-all overflow-hidden ${isExpanded ? 'shadow-lg' : 'shadow-sm'}`}>
                       <button 
-                        onClick={() => setExpandedLesson(expandedLesson === lesson.id ? -1 : lesson.id)}
+                        onClick={() => setExpandedLesson(expandedLesson === lesson.id ? null : lesson.id)}
                         className="w-full p-6 flex justify-between items-center text-left"
                       >
                         <div className="flex gap-4 items-center">
@@ -3803,7 +4001,7 @@ export default function App() {
                             <Music2 size={18} />
                           </div>
                           <div>
-                            <h4 className="text-sm font-bold text-zinc-900">Lesson #{lesson.id}</h4>
+                            <h4 className="text-sm font-bold text-zinc-900">Lesson #{lesson.lessonNumber}</h4>
                             <p className="text-[10px] text-zinc-400">{lesson.date}</p>
                           </div>
                         </div>
@@ -3984,35 +4182,57 @@ export default function App() {
         )}
 
         {/* Reschedule Modal */}
-        <BottomSheet isOpen={showRescheduleModal} onClose={() => setShowRescheduleModal(false)}>
+        <BottomSheet isOpen={showRescheduleModal} onClose={() => {
+          setShowRescheduleModal(false);
+          setReschedulingLesson(null);
+          setSelectedRescheduleDate(null);
+          setSelectedRescheduleTime(null);
+        }}>
           <div className="px-6 pb-10">
             <h3 className="text-2xl font-serif mb-2">Reschedule Session</h3>
-            <p className="text-sm text-zinc-500 mb-8">Pick a new date and time for your session with {mentor.name}.</p>
+            <p className="text-sm text-zinc-500 mb-8">Pick a new date and time for your session.</p>
             
             <div className="space-y-6">
               <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
-                {dates.map((date, i) => (
-                  <button 
-                    key={i}
-                    className={`flex-shrink-0 w-12 py-4 rounded-2xl flex flex-col items-center gap-1 transition-all ${i === 2 ? 'bg-zinc-900 text-white shadow-lg' : 'bg-zinc-50 text-zinc-400'}`}
-                  >
-                    <span className="text-[8px] uppercase font-bold">{days[date.getDay()]}</span>
-                    <span className="text-sm font-bold">{date.getDate()}</span>
-                  </button>
-                ))}
+                {dates.map((date, i) => {
+                  const dateStr = date.toISOString().split('T')[0];
+                  const isSelected = selectedRescheduleDate === dateStr;
+                  return (
+                    <button 
+                      key={i}
+                      onClick={() => setSelectedRescheduleDate(dateStr)}
+                      className={`flex-shrink-0 w-12 py-4 rounded-2xl flex flex-col items-center gap-1 transition-all ${isSelected ? 'bg-zinc-900 text-white shadow-lg' : 'bg-zinc-50 text-zinc-400'}`}
+                    >
+                      <span className="text-[8px] uppercase font-bold">{days[date.getDay()]}</span>
+                      <span className="text-sm font-bold">{date.getDate()}</span>
+                    </button>
+                  );
+                })}
               </div>
               
               <div className="grid grid-cols-3 gap-2">
-                {['10:00', '11:00', '14:00', '15:00', '16:00', '17:00'].map(time => (
-                  <button key={time} className={`py-3.5 rounded-xl border text-[11px] font-bold transition-all ${time === '14:00' ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white border-zinc-100 text-zinc-400'}`}>
-                    {time}
-                  </button>
-                ))}
+                {['10:00', '11:00', '14:00', '15:00', '16:00', '17:00'].map(time => {
+                  const isSelected = selectedRescheduleTime === time;
+                  return (
+                    <button 
+                      key={time} 
+                      onClick={() => setSelectedRescheduleTime(time)}
+                      className={`py-3.5 rounded-xl border text-[11px] font-bold transition-all ${isSelected ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white border-zinc-100 text-zinc-400'}`}
+                    >
+                      {time}
+                    </button>
+                  );
+                })}
               </div>
 
               <button 
-                onClick={() => setShowRescheduleModal(false)}
-                className="w-full py-5 bg-teal-500 text-white font-bold rounded-full mt-6 shadow-lg shadow-teal-500/20 active:scale-95 transition-transform"
+                onClick={() => {
+                  if (reschedulingLesson && selectedRescheduleDate && selectedRescheduleTime) {
+                    handleRescheduleRequest(reschedulingLesson, selectedRescheduleDate, selectedRescheduleTime);
+                  }
+                }}
+                disabled={!selectedRescheduleDate || !selectedRescheduleTime}
+                className={`w-full py-5 text-white font-bold rounded-full mt-6 shadow-lg active:scale-95 transition-transform ${(!selectedRescheduleDate || !selectedRescheduleTime) ? 'bg-zinc-300 cursor-not-allowed' : 'bg-teal-500 shadow-teal-500/20'}`}
               >
                 Confirm New Time
               </button>
@@ -4080,7 +4300,7 @@ export default function App() {
           ))}
         </div>
 
-        <div className={`p-5 pb-10 border-t ${dark ? 'border-white/10' : 'border-zinc-100'}`}>
+        <div className={`p-5 pb-6 border-t ${dark ? 'border-white/10' : 'border-zinc-100'}`}>
           <div className="relative">
             <input 
               value={chatNewMessage}
@@ -4345,27 +4565,6 @@ export default function App() {
           {/* About Me Section */}
           <section className="space-y-4">
             <h2 className={`text-[10px] font-bold uppercase tracking-widest ${dark ? 'text-white/40' : 'text-zinc-500'}`}>About Me</h2>
-            
-            {/* Profile Completion Shimmer */}
-            <div className="mb-6">
-              <div className="flex justify-between items-center mb-2">
-                <span className={`text-[10px] font-bold uppercase tracking-widest ${dark ? 'text-white/40' : 'text-zinc-500'}`}>Profile Completion</span>
-                <span className={`text-[10px] font-bold ${dark ? 'text-harbour-400' : 'text-harbour-600'}`}>85%</span>
-              </div>
-              <div className={`h-1.5 w-full rounded-full overflow-hidden relative ${dark ? 'bg-white/10' : 'bg-black/5'}`}>
-                <motion.div 
-                  initial={{ width: 0 }}
-                  animate={{ width: '85%' }}
-                  className="h-full bg-harbour-500 relative"
-                >
-                  <motion.div 
-                    animate={{ x: ['-100%', '100%'] }}
-                    transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
-                    className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent w-1/2"
-                  />
-                </motion.div>
-              </div>
-            </div>
             
             <div className={`p-5 rounded-[2rem] border ${dark ? 'bg-zinc-900 border-white/5' : 'bg-white border-zinc-100 shadow-sm'}`}>
               <div className="mb-6">
@@ -4739,6 +4938,7 @@ export default function App() {
 
   const AuthContainer = () => {
     const isDark = true;
+    const [userRole, setUserRole] = useState<'student' | 'mentor' | null>(null);
     const splashCards = [
       {
         title: "Discover Malaysia's Musical Roots",
@@ -5374,13 +5574,13 @@ export default function App() {
                 </span>
               </div>
               <div className="space-y-3">
-                {lessons.filter(l => l.status === 'pending').length === 0 ? (
+                {lessons.filter(l => (l.status === 'pending' || (l.status === 'reschedule_requested' && l.requestedBy !== currentUser?.uid))).length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-40 gap-2">
                     <Inbox size={28} className={isDark ? "text-white/20" : "text-zinc-200"} />
                     <p className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? "text-white/40" : "text-zinc-400"}`}>No pending requests</p>
                   </div>
                 ) : (
-                  lessons.filter(l => l.status === 'pending').map(request => {
+                  lessons.filter(l => (l.status === 'pending' || (l.status === 'reschedule_requested' && l.requestedBy !== currentUser?.uid))).map(request => {
                     const student = realStudents.find(s => s.id === request.studentId) || MOCK_STUDENTS.find(s => s.id === request.studentId);
                     const resolvedStudentName = student?.name || (request.studentName && request.studentName !== 'Student' ? request.studentName : null) || `Student (${request.studentId?.slice(0,6) || '?'})`;
                     return (
@@ -5425,9 +5625,9 @@ export default function App() {
                             </div>
                             <div>
                               <p className={`text-[10px] font-bold uppercase tracking-tighter ${isDark ? 'text-white/60' : 'text-zinc-500'}`}>
-                                {new Date(request.date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+                                {request.status === 'reschedule_requested' ? 'Reschedule Requested For' : new Date(request.date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
                               </p>
-                              <p className={`text-sm font-serif-curvy italic leading-none mt-0.5 ${isDark ? 'text-white' : 'text-zinc-900'}`}>{request.time}</p>
+                              <p className={`text-sm font-serif-curvy italic leading-none mt-0.5 ${isDark ? 'text-white' : 'text-zinc-900'}`}>{request.status === 'reschedule_requested' ? `${new Date(request.requestedDate).toLocaleDateString()} at ${request.requestedTime}` : request.time}</p>
                             </div>
                           </div>
                         </div>
@@ -5455,34 +5655,41 @@ export default function App() {
                           </button>
                           <button 
                             onClick={async () => {
-                              try {
-                                if (request.id.startsWith('l')) {
-                                  // Handle mock data
-                                  setLessons(prev => prev.map(l => l.id === request.id ? { ...l, status: 'confirmed' } : l));
-                                } else {
-                                  await updateDoc(doc(db, 'lessons', request.id), { status: 'confirmed' });
+                              if (request.status === 'reschedule_requested') {
+                                handleRescheduleAction(request, 'accept');
+                              } else {
+                                try {
+                                  if (request.id.startsWith('l')) {
+                                    setLessons(prev => prev.map(l => l.id === request.id ? { ...l, status: 'confirmed' } : l));
+                                  } else {
+                                    await updateDoc(doc(db, 'lessons', request.id), { status: 'confirmed' });
+                                  }
+                                  triggerNotification(request.studentId, 'lesson_confirmed', 'Trial Confirmed', `${mentorProfile.name} confirmed your free trial on ${new Date(request.date).toLocaleDateString()} at ${request.time}`);
+                                } catch (error) {
+                                  console.error("Error confirming lesson:", error);
                                 }
-                                triggerNotification('lesson_confirmed', 'Trial Confirmed', `${mentorProfile.name} confirmed your free trial on ${new Date(request.date).toLocaleDateString()} at ${request.time}`);
-                              } catch (error) {
-                                console.error("Error confirming lesson:", error);
                               }
                             }}
                             className="flex-1 bg-harbour-600 text-white text-[10px] font-bold py-3 rounded-full hover:bg-harbour-500 transition-colors shadow-lg shadow-harbour-600/20"
                           >
-                            Accept Request
+                            {request.status === 'reschedule_requested' ? 'Accept Reschedule' : 'Accept Request'}
                           </button>
                           <button 
                             onClick={async () => {
-                              try {
-                                if (request.id.startsWith('l')) {
-                                  // Handle mock data
-                                  setLessons(prev => prev.map(l => l.id === request.id ? { ...l, status: 'cancelled' } : l));
-                                } else {
-                                  await updateDoc(doc(db, 'lessons', request.id), { status: 'cancelled' });
+                              if (request.status === 'reschedule_requested') {
+                                handleRescheduleAction(request, 'decline');
+                              } else {
+                                try {
+                                  if (request.id.startsWith('l')) {
+                                    // Handle mock data
+                                    setLessons(prev => prev.map(l => l.id === request.id ? { ...l, status: 'cancelled' } : l));
+                                  } else {
+                                    await updateDoc(doc(db, 'lessons', request.id), { status: 'cancelled' });
+                                  }
+                                  triggerNotification(request.studentId, 'lesson_declined', 'Trial Declined', `Your trial request was declined. Find another mentor`);
+                                } catch (error) {
+                                  console.error("Error declining lesson:", error);
                                 }
-                                triggerNotification('lesson_declined', 'Trial Declined', `Your trial request was declined. Find another mentor`);
-                              } catch (error) {
-                                console.error("Error declining lesson:", error);
                               }
                             }}
                             className={`flex-1 border text-[10px] font-bold py-3 rounded-full transition-colors ${isDark ? 'border-white/10 text-white hover:bg-white/5' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
@@ -5782,7 +5989,8 @@ export default function App() {
     const filteredStudents = (realStudents.length > 0 ? realStudents : MOCK_STUDENTS)
       .filter(s => rosterFilter === 'All' || s.package === rosterFilter || 
         (rosterFilter === 'Package' && (s.package === 'Package 8' || s.package === 'Package 12')))
-      .filter(s => s.name.toLowerCase().includes(rosterSearch.toLowerCase()));
+      .filter(s => s.name.toLowerCase().includes(rosterSearch.toLowerCase()))
+      .filter(s => s.nextSession || s.lastSession || realSessionLogs.some(log => log.studentId === s.id));
 
     return (
       <div className="px-5 pt-12 pb-32 bg-zinc-50 min-h-full">
@@ -6543,7 +6751,10 @@ export default function App() {
               <div className="absolute top-0 right-0 w-32 h-32 bg-zinc-50 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150 duration-700" />
             </button>
 
-            <button className="group relative overflow-hidden p-6 bg-white rounded-[2.5rem] border border-zinc-100 shadow-sm hover:shadow-md transition-all">
+            <button 
+              onClick={() => setShowCredentialsSheet(true)}
+              className="group relative overflow-hidden p-6 bg-white rounded-[2.5rem] border border-zinc-100 shadow-sm hover:shadow-md transition-all"
+            >
               <div className="flex items-center justify-between relative z-10">
                 <div className="flex items-center gap-5">
                   <div className="w-14 h-14 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform duration-500">
@@ -7185,37 +7396,73 @@ export default function App() {
   }: any) => {
     const [showAIGenerateSheet, setShowAIGenerateSheet] = useState(false);
     const [aiBrainDump, setAiBrainDump] = useState('');
+    const [localBrainDump, setLocalBrainDump] = useState('');
     const [isGenerating, setIsGenerating] = useState(false);
     const [sessionSaveSuccess, setSessionSaveSuccess] = useState(false);
     const [sessionRating, setSessionRating] = useState(0);
     const [studentMood, setStudentMood] = useState<'Engaged' | 'Distracted' | 'Tired' | null>(null);
     const [sessionCovered, setSessionCovered] = useState('');
+    const [localCovered, setLocalCovered] = useState('');
     const [sessionFocus, setSessionFocus] = useState('');
+    const [localFocus, setLocalFocus] = useState('');
     const [selectedMilestones, setSelectedMilestones] = useState<string[]>([]);
 
     if (!selectedStudent || !selectedLesson) return null;
 
     const handleAIGenerate = async () => {
-      if (!aiBrainDump) return;
+      if (!localBrainDump) return;
       setIsGenerating(true);
       
-      // Simulate AI processing the brain dump
-      setTimeout(() => {
-        const sentences = aiBrainDump.split('.').filter(s => s.trim().length > 0);
-        const coveredText = sentences.slice(0, Math.ceil(sentences.length / 2)).join('. ') + '.';
-        const focusText = sentences.slice(Math.ceil(sentences.length / 2)).join('. ') + '.';
+      try {
+        const prompt = `You are a music mentor assistant. A mentor has provided a "brain dump" of a lesson with a student. 
+        Student Name: ${selectedStudent.name}
+        Instrument: ${selectedStudent.instrument}
+        Lesson Number: ${selectedLesson.lessonNumber}
+        Brain Dump: "${localBrainDump}"
         
-        setSessionCovered(coveredText || "Focused on " + selectedStudent.instrument + " techniques discussed today.");
-        setSessionFocus(focusText || "Continue practicing the exercises from today's lesson.");
+        Please structure this into two parts:
+        1. "Covered": A professional summary of what was taught and achieved.
+        2. "Focus": Specific practice instructions for the student for the next session.
+        
+        Return the response in JSON format with "covered" and "focus" keys.`;
+
+        const response = await ai.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+          }
+        });
+
+        const result = JSON.parse(response.text || '{}');
+        
+        const covered = result.covered || "Focused on " + selectedStudent.instrument + " techniques discussed today.";
+        const focus = result.focus || "Continue practicing the exercises from today's lesson.";
+        
+        setSessionCovered(covered);
+        setLocalCovered(covered);
+        setSessionFocus(focus);
+        setLocalFocus(focus);
         
         if (aiBrainDump.length > 50 && selectedStudent.learningPath && selectedStudent.learningPath.length > 0) {
           setSelectedMilestones([selectedStudent.learningPath[0].id]);
         }
-        
+      } catch (error) {
+        console.error("AI Generation Error:", error);
+        // Fallback to simple logic if AI fails
+        const sentences = aiBrainDump.split('.').filter(s => s.trim().length > 0);
+        const coveredText = sentences.slice(0, Math.ceil(sentences.length / 2)).join('. ') + '.';
+        const focusText = sentences.slice(Math.ceil(sentences.length / 2)).join('. ') + '.';
+        setSessionCovered(coveredText || "Focused on " + selectedStudent.instrument + " techniques.");
+        setLocalCovered(coveredText || "Focused on " + selectedStudent.instrument + " techniques.");
+        setSessionFocus(focusText || "Continue practicing.");
+        setLocalFocus(focusText || "Continue practicing.");
+      } finally {
         setIsGenerating(false);
         setShowAIGenerateSheet(false);
         setAiBrainDump('');
-      }, 1500);
+        setLocalBrainDump('');
+      }
     };
 
     const handleSave = async () => {
@@ -7225,6 +7472,7 @@ export default function App() {
         const logData = {
           studentId: selectedStudent.id,
           mentorId: currentUser.uid,
+          instrument: selectedLesson.instrument,
           lessonNumber: selectedLesson.lessonNumber,
           date: new Date().toISOString().split('T')[0],
           covered: sessionCovered,
@@ -7256,6 +7504,7 @@ export default function App() {
 
         // Trigger notifications
         await triggerNotification(
+          selectedStudent.id,
           'session_logged', 
           'Session Logged', 
           `${userProfile?.name || 'Mentor'} has added notes from your Lesson ${selectedLesson.lessonNumber}`
@@ -7263,6 +7512,7 @@ export default function App() {
 
         if (selectedMilestones.length > 0) {
           await triggerNotification(
+            selectedStudent.id,
             'milestone_completed', 
             'Milestone Completed', 
             `You've reached a new milestone in your ${selectedStudent.instrument} journey!`
@@ -7378,8 +7628,9 @@ export default function App() {
             <div className="space-y-2">
               <label className="text-[9px] uppercase tracking-widest font-bold text-zinc-400">What did you cover?</label>
               <textarea 
-                value={sessionCovered}
-                onChange={(e) => setSessionCovered(e.target.value)}
+                value={localCovered}
+                onChange={(e) => setLocalCovered(e.target.value)}
+                onBlur={() => setSessionCovered(localCovered)}
                 className="w-full bg-zinc-50 border border-zinc-100 rounded-2xl p-4 text-xs min-h-[120px] focus:outline-none text-zinc-900 leading-relaxed"
                 placeholder="Topics taught, techniques explored..."
               />
@@ -7389,8 +7640,9 @@ export default function App() {
             <div className="space-y-2">
               <label className="text-[9px] uppercase tracking-widest font-bold text-zinc-400">Practice focus for next session</label>
               <textarea 
-                value={sessionFocus}
-                onChange={(e) => setSessionFocus(e.target.value)}
+                value={localFocus}
+                onChange={(e) => setLocalFocus(e.target.value)}
+                onBlur={() => setSessionFocus(localFocus)}
                 className="w-full bg-amber-50/30 border border-amber-100/50 rounded-2xl p-4 text-xs min-h-[80px] focus:outline-none text-zinc-900 italic"
                 placeholder="What should the student work on?"
               />
@@ -7461,8 +7713,9 @@ export default function App() {
               Type a quick brain dump of what happened in the lesson. AI will structure it into a beautiful log for your student.
             </p>
             <textarea 
-              value={aiBrainDump}
-              onChange={(e) => setAiBrainDump(e.target.value)}
+              value={localBrainDump}
+              onChange={(e) => setLocalBrainDump(e.target.value)}
+              onBlur={() => setAiBrainDump(localBrainDump)}
               className="w-full bg-zinc-50 border border-zinc-100 rounded-2xl p-4 text-xs min-h-[120px] focus:outline-none text-zinc-900"
               placeholder="e.g. Sarah did great today. We finished the D major scale and started the first page of Zapin Melayu. She needs to work on her thumb position."
             />
@@ -7504,6 +7757,11 @@ export default function App() {
     const totalLessons = 8; // Assuming a standard 8-lesson package for now
     const progressPercent = Math.min(Math.round((lessonsDone / totalLessons) * 100), 100);
 
+    const [isEditingNotes, setIsEditingNotes] = useState(false);
+    const [localNotes, setLocalNotes] = useState(selectedStudent.notes || "Sarah responds really well to visual metaphors. She's struggling with the bridge section of 'Zapin Melayu' but her finger strength has improved significantly. Remind her to keep her thumb relaxed during the faster passages.");
+
+    const [localMilestoneTitle, setLocalMilestoneTitle] = useState('');
+    
     const toggleMilestone = (milestoneId: string) => {
       if (!selectedStudent || !selectedStudent.learningPath) return;
       const newPath = (selectedStudent.learningPath || []).map(m => {
@@ -7598,12 +7856,30 @@ export default function App() {
               <div className="absolute top-0 right-0 p-3 opacity-10">
                 <Lock size={40} className="text-amber-900" />
               </div>
-              <p className="text-xs text-amber-900 leading-relaxed italic font-serif-curvy mb-4">
-                "Sarah responds really well to visual metaphors. She's struggling with the bridge section of 'Zapin Melayu' but her finger strength has improved significantly. Remind her to keep her thumb relaxed during the faster passages."
-              </p>
+              {isEditingNotes ? (
+                <textarea
+                  value={localNotes}
+                  onChange={(e) => setLocalNotes(e.target.value)}
+                  onBlur={() => {
+                    // Sync to outer state if needed, but here localNotes is the source of truth for the p tag
+                  }}
+                  autoFocus
+                  className="w-full bg-transparent text-xs text-amber-900 leading-relaxed italic font-serif-curvy mb-4 border-b border-amber-200 focus:outline-none"
+                  rows={4}
+                />
+              ) : (
+                <p className="text-xs text-amber-900 leading-relaxed italic font-serif-curvy mb-4">
+                  "{localNotes}"
+                </p>
+              )}
               <div className="flex items-center justify-between">
                 <span className="text-[9px] font-bold uppercase tracking-widest text-amber-600/60">Only visible to you</span>
-                <button className="text-[9px] font-bold text-amber-700 underline underline-offset-2">Edit Notes</button>
+                <button 
+                  onClick={() => setIsEditingNotes(!isEditingNotes)}
+                  className="text-[9px] font-bold text-amber-700 underline underline-offset-2"
+                >
+                  {isEditingNotes ? 'Save Notes' : 'Edit Notes'}
+                </button>
               </div>
             </div>
           </section>
@@ -7807,24 +8083,27 @@ export default function App() {
               <label className="text-[10px] uppercase tracking-widest font-bold text-zinc-400 ml-1">Stage Title</label>
               <input 
                 type="text" 
-                value={newMilestoneTitle}
-                onChange={(e) => setNewMilestoneTitle(e.target.value)}
+                value={localMilestoneTitle}
+                onChange={(e) => setLocalMilestoneTitle(e.target.value)}
+                onBlur={() => setNewMilestoneTitle(localMilestoneTitle)}
                 placeholder="e.g. Advanced Finger Picking"
                 className="w-full p-5 bg-zinc-50 border border-zinc-100 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-zinc-900/5 focus:bg-white transition-all"
               />
             </div>
             <button 
               onClick={() => {
-                if (!newMilestoneTitle) return;
+                const titleToUse = localMilestoneTitle || newMilestoneTitle;
+                if (!titleToUse) return;
                 const newMilestone: Milestone = {
                   id: 'm' + Date.now(),
-                  title: newMilestoneTitle,
+                  title: titleToUse,
                   status: 'upcoming'
                 };
                 setSelectedStudent({
                   ...selectedStudent,
                   learningPath: [...(selectedStudent.learningPath || []), newMilestone]
                 });
+                setLocalMilestoneTitle('');
                 setNewMilestoneTitle('');
                 setShowAddMilestoneSheet(false);
               }}
@@ -7942,51 +8221,49 @@ export default function App() {
     const [isAiBuddyTyping, setIsAiBuddyTyping] = useState(false);
     const [aiBuddyInput, setAiBuddyInput] = useState('');
 
-    const handleAIBuddyAction = (action: string) => {
-      setAiBuddyMessages(prev => [...prev, { role: 'user', content: action }]);
+    const handleAIBuddyAction = async (action: string) => {
+      const newMessages = [...aiBuddyMessages, { role: 'user' as const, content: action }];
+      setAiBuddyMessages(newMessages);
       setIsAiBuddyTyping(true);
       
-      // Simulate AI response
-      setTimeout(() => {
-        let response = "";
-        if (isStudent) {
-          if (action === "What should I practice today?") {
-            response = "Based on your last lesson with Cikgu Aris, you should focus on smooth bow control and clean transitions between Sa–Ri–Ga. I recommend a 20-minute session: 5 mins warm-up, 10 mins bowing exercise, and 5 mins slow note transitions.";
-          } else if (action === "Summarize my last lesson") {
-            response = "In your last lesson, you covered basic bowing techniques and the Sa-Ri-Ga notes. Your mentor noted that your rhythm is improving, but you should keep practicing the transitions to make them smoother.";
-          } else if (action === "Explain my next milestone") {
-            response = "Your next milestone is 'Simple Rhythms'. This involves playing basic patterns consistently at 60 BPM. You're already 60% of the way there!";
-          } else if (action === "Motivate me for practice") {
-            response = "You've completed 2 milestones this week — great consistency! Remember, even 15 minutes of slow, clean practice today will make a huge difference. You've got this!";
-          } else if (action === "Show my latest materials") {
-            response = "Your mentor uploaded a 'Bowing Exercise PDF' and a 'Practice Guide' for your current stage. You can find them in the Growth tab!";
-          } else if (action === "What should I review before class?") {
-            response = "Before your next class with Cikgu Aris, review the 'Bowing Exercise PDF' and practice the Sa-Ri-Ga transitions at a slow tempo.";
-          } else if (action === "Create a 15-minute practice routine") {
-            response = "Here's a quick 15-minute routine: \n1. 3 mins: Open string bowing (focus on straight bow)\n2. 7 mins: Sa-Ri-Ga transitions (slow and clean)\n3. 5 mins: Review the 'Simple Rhythms' patterns.";
-          } else {
-            response = "I'm here to help you with your music journey! You can ask me about your practice, lessons, or materials.";
+      try {
+        const systemInstruction = isStudent 
+          ? `You are a supportive Music Companion for a student learning ${isNewUser ? 'a new instrument' : 'their instrument'}. 
+             Help them with practice tips, motivation, and understanding their lessons. 
+             Keep responses encouraging, concise, and professional.`
+          : `You are a Teaching Assistant for a music mentor. 
+             Help them draft lesson summaries, practice plans, and analyze student progress. 
+             Be professional, efficient, and helpful.`;
+
+        const chat = ai.chats.create({
+          model: "gemini-3-flash-preview",
+          config: {
+            systemInstruction
           }
-        } else {
-          // Mentor logic
-          if (action === "Suggest a lesson summary") {
-            response = "Based on the session notes, I suggest: 'Today we focused on advanced bowing and complex rhythmic patterns. Student showed great improvement in Sa-Ri-Ga transitions but needs more work on 4-beat cycles.'";
-          } else if (action === "Draft a practice plan for Sarah") {
-            response = "Practice Plan for Sarah: 1. 5 min warm-up (Sa-Ri-Ga), 2. 10 min bow control exercise (4-beat cycles), 3. 5 min review of Lesson 3 patterns.";
-          } else if (action === "Analyze Marcus's progress") {
-            response = "Marcus has been consistent with his practice logs. He's currently at 80% completion for 'Rhythm Stability'. He might be ready for 'Advanced Scales' next week.";
-          } else if (action === "Recommend materials for next lesson") {
-            response = "For the next lesson on 'Advanced Scales', I recommend sharing the 'Scale Mastery PDF' and the 'Finger Placement Video'.";
-          } else if (action === "Draft an encouraging note") {
-            response = "Encouraging Note: 'Great job on mastering the basic striking! Your dedication is really showing. Let's keep this momentum going into the next stage!'";
-          } else {
-            response = "I'm your mentor assistant. I can help you draft summaries, plans, or analyze student progress.";
+        });
+
+        // Convert history for Gemini
+        const history = aiBuddyMessages.map(m => ({
+          role: m.role === 'user' ? 'user' as const : 'model' as const,
+          parts: [{ text: m.content }]
+        }));
+
+        const response = await ai.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: [...history, { role: 'user', parts: [{ text: action }] }],
+          config: {
+            systemInstruction
           }
-        }
-        
-        setAiBuddyMessages(prev => [...prev, { role: 'assistant', content: response }]);
+        });
+
+        const aiResponse = response.text || "I'm sorry, I couldn't process that request.";
+        setAiBuddyMessages(prev => [...prev, { role: 'assistant', content: aiResponse }]);
+      } catch (error) {
+        console.error("AI Buddy Error:", error);
+        setAiBuddyMessages(prev => [...prev, { role: 'assistant', content: "I'm having a bit of trouble connecting right now. Let's try again in a moment!" }]);
+      } finally {
         setIsAiBuddyTyping(false);
-      }, 1500);
+      }
     };
 
     const studentPrompts = [
@@ -8244,7 +8521,7 @@ export default function App() {
                             } else {
                               await updateDoc(doc(db, 'lessons', activeLessonAction.id), { status: 'cancelled' });
                             }
-                            triggerNotification('lesson_cancelled', 'Lesson Cancelled', `Lesson with ${activeLessonAction.studentName} has been cancelled.`);
+                            triggerNotification(activeLessonAction.studentId, 'lesson_cancelled', 'Lesson Cancelled', `Lesson with ${mentorProfile.name} has been cancelled.`);
                             setActiveLessonAction(null);
                           } catch (error) {
                             console.error("Error cancelling lesson:", error);
@@ -8356,7 +8633,7 @@ export default function App() {
           </AnimatePresence>
 
           {/* Mobile Nav */}
-          {view !== 'student-detail' && (
+          {!['student-detail', 'log-session'].includes(view) && (
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 w-[90%]">
             <div className="backdrop-blur-2xl border rounded-[2rem] px-2 py-1.5 flex items-center justify-between shadow-2xl transition-all duration-500 bg-zinc-900/90 border-white/10">
               {[
@@ -8449,6 +8726,233 @@ export default function App() {
       </BottomSheet>
 
       {/* Global Bottom Sheets */}
+      <BottomSheet
+        isOpen={showCredentialsSheet}
+        onClose={() => setShowCredentialsSheet(false)}
+        title="Credentials & ID"
+      >
+        <div className="px-6 pb-12 space-y-8">
+          <div className="p-6 bg-amber-50 rounded-[2rem] border border-amber-100 flex items-center gap-4">
+            <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-amber-600 shadow-sm">
+              <CheckCircle2 size={24} />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-zinc-900">Identity Verified</p>
+              <p className="text-[10px] text-zinc-500">Verified via MyKad on 12 Jan 2026</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-2">Certifications</h3>
+            <div className="space-y-3">
+              {[
+                { title: 'Master of Traditional Arts', issuer: 'ASWARA', year: '2022' },
+                { title: 'Sape Performance Grade 8', issuer: 'Sarawak Arts Council', year: '2020' }
+              ].map((cert, i) => (
+                <div key={i} className="p-5 bg-white border border-zinc-100 rounded-2xl flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-zinc-900">{cert.title}</p>
+                    <p className="text-[10px] text-zinc-400">{cert.issuer} • {cert.year}</p>
+                  </div>
+                  <button className="text-harbour-600">
+                    <Download size={16} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <button className="w-full py-4 border-2 border-dashed border-zinc-100 rounded-2xl flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-widest text-zinc-400 hover:bg-zinc-50 transition-colors">
+            <Plus size={16} /> Add New Certification
+          </button>
+        </div>
+      </BottomSheet>
+
+      <BottomSheet 
+        isOpen={showAllLessonsSheet} 
+        onClose={() => setShowAllLessonsSheet(false)}
+        title={`${selectedInstrumentJourney} Schedule`}
+      >
+        <div className="px-6 pb-10 space-y-4">
+          {studentLessons.filter(l => l.instrument === selectedInstrumentJourney).length > 0 ? (
+            studentLessons
+              .filter(l => l.instrument === selectedInstrumentJourney)
+              .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+              .map(lesson => (
+                <button 
+                  key={lesson.id} 
+                  onClick={() => setSelectedLessonDetails(lesson)}
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 flex items-center justify-between shadow-sm hover:bg-white/10 transition-colors text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${lesson.status === 'confirmed' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                      <Calendar size={18} />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-white">{new Date(lesson.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} • {lesson.time}</p>
+                      <p className="text-[9px] text-white/40 uppercase tracking-widest font-bold">{lesson.instrument} • {lesson.type}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1">
+                    <div className={`px-2 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-widest ${
+                      lesson.status === 'confirmed' ? 'bg-emerald-500 text-white' : 
+                      lesson.status === 'reschedule_requested' ? 'bg-indigo-500 text-white' :
+                      'bg-amber-500 text-white'
+                    }`}>
+                      {lesson.status.replace('_', ' ')}
+                    </div>
+                    <p className="text-[8px] text-white/30 font-bold uppercase tracking-widest">{lesson.mentorName}</p>
+                  </div>
+                </button>
+              ))
+          ) : (
+            <div className="text-center py-10">
+              <div className="w-12 h-12 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Music2 size={20} className="text-white/20" />
+              </div>
+              <p className="text-sm text-white/40">No lessons booked yet</p>
+            </div>
+          )}
+        </div>
+      </BottomSheet>
+
+      <BottomSheet 
+        isOpen={!!selectedLessonDetails} 
+        onClose={() => setSelectedLessonDetails(null)}
+        title="Session Details"
+      >
+        <div className="px-6 pb-10">
+          {selectedLessonDetails && (
+            <div className="space-y-8">
+              <div className="flex justify-between items-start">
+                <div className="flex gap-4 items-center">
+                  <Avatar 
+                    name={selectedLessonDetails.mentorName || selectedLessonDetails.studentName} 
+                    photo={realMentors.find(m => m.id === selectedLessonDetails.mentorId)?.photo || realStudents.find(s => s.id === selectedLessonDetails.studentId)?.photo} 
+                    size="lg" 
+                    className="rounded-2xl shadow-xl" 
+                  />
+                  <div>
+                    <h3 className="text-xl font-serif text-white">{selectedLessonDetails.mentorName || selectedLessonDetails.studentName}</h3>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-white/40">{selectedLessonDetails.instrument} • {selectedLessonDetails.type}</p>
+                  </div>
+                </div>
+                <div className={`px-3 py-1.5 rounded-full text-[9px] font-bold uppercase tracking-widest ${
+                  selectedLessonDetails.status === 'confirmed' ? 'bg-emerald-500 text-white' : 
+                  selectedLessonDetails.status === 'reschedule_requested' ? 'bg-indigo-500 text-white' :
+                  'bg-amber-500 text-white'
+                }`}>
+                  {selectedLessonDetails.status.replace('_', ' ')}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white/5 p-4 rounded-2xl border border-white/10">
+                  <p className="text-[8px] font-bold uppercase tracking-widest text-white/30 mb-1">Date</p>
+                  <p className="text-xs font-bold text-white">{new Date(selectedLessonDetails.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
+                </div>
+                <div className="bg-white/5 p-4 rounded-2xl border border-white/10">
+                  <p className="text-[8px] font-bold uppercase tracking-widest text-white/30 mb-1">Time</p>
+                  <p className="text-xs font-bold text-white">{selectedLessonDetails.time}</p>
+                </div>
+              </div>
+
+              <div className="bg-white/5 p-5 rounded-2xl border border-white/10">
+                <p className="text-[8px] font-bold uppercase tracking-widest text-white/30 mb-2">Location</p>
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-white/40">
+                    <MapPin size={14} />
+                  </div>
+                  <p className="text-xs font-bold text-white">{selectedLessonDetails.location || 'Bangsar Studio'}</p>
+                </div>
+              </div>
+
+              {selectedLessonDetails.status === 'reschedule_requested' && (
+                <div className="p-5 bg-indigo-500/10 rounded-2xl border border-indigo-500/20">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Clock size={14} className="text-indigo-400" />
+                    <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">Reschedule Request</p>
+                  </div>
+                  <p className="text-xs text-white/80 mb-4">
+                    Requested for: <span className="font-bold text-white">{new Date(selectedLessonDetails.requestedDate).toLocaleDateString()} at {selectedLessonDetails.requestedTime}</span>
+                  </p>
+                  {selectedLessonDetails.requestedBy !== currentUser?.uid && (
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => {
+                          handleRescheduleAction(selectedLessonDetails, 'accept');
+                          setSelectedLessonDetails(null);
+                        }}
+                        className="flex-1 py-3 bg-indigo-600 text-white text-[10px] font-bold uppercase tracking-widest rounded-xl"
+                      >
+                        Accept
+                      </button>
+                      <button 
+                        onClick={() => {
+                          handleRescheduleAction(selectedLessonDetails, 'decline');
+                          setSelectedLessonDetails(null);
+                        }}
+                        className="flex-1 py-3 bg-white/5 border border-white/10 text-white text-[10px] font-bold uppercase tracking-widest rounded-xl"
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => {
+                    const targetId = isStudent ? selectedLessonDetails.mentorId : selectedLessonDetails.studentId;
+                    const targetName = isStudent ? selectedLessonDetails.mentorName : selectedLessonDetails.studentName;
+                    setSelectedChat({
+                      id: `new-${targetId}`,
+                      conversationId: null,
+                      name: targetName,
+                      photo: null,
+                      role: isStudent ? 'Mentor' : 'Student',
+                      recipientId: targetId
+                    });
+                    setView('messages');
+                    setSelectedLessonDetails(null);
+                    setShowAllLessonsSheet(false);
+                  }}
+                  className="flex-1 py-4 bg-white text-zinc-900 text-[10px] font-bold uppercase tracking-widest rounded-full"
+                >
+                  Message
+                </button>
+                {selectedLessonDetails.status !== 'completed' && selectedLessonDetails.status !== 'cancelled' && (
+                  <>
+                    <button 
+                      onClick={() => {
+                        setReschedulingLesson(selectedLessonDetails);
+                        setShowRescheduleModal(true);
+                        setSelectedLessonDetails(null);
+                      }}
+                      className="flex-1 py-4 border border-white/10 text-white text-[10px] font-bold uppercase tracking-widest rounded-full"
+                    >
+                      Reschedule
+                    </button>
+                    <button 
+                      onClick={() => {
+                        if (window.confirm('Cancel this session?')) {
+                          handleCancelLesson(selectedLessonDetails);
+                          setSelectedLessonDetails(null);
+                        }
+                      }}
+                      className="w-12 h-12 flex items-center justify-center border border-red-500/20 text-red-500 rounded-full"
+                    >
+                      <X size={18} />
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </BottomSheet>
+
       <BottomSheet 
         isOpen={showScheduleSheet} 
         onClose={() => setShowScheduleSheet(false)}

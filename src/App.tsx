@@ -873,9 +873,10 @@ const MOCK_MENTORS: MentorDetail[] = [
     reviews: [
       { id: 'r1', studentName: 'Sarah J.', lessonsTaken: 12, rating: 5, comment: 'Cikgu Aris is an amazing teacher! He is very patient and explains things clearly.', timeAgo: '2 days ago' },
       { id: 'r2', studentName: 'Marcus C.', lessonsTaken: 5, rating: 4.8, comment: 'Really enjoyed the sessions. The traditional techniques are fascinating.', timeAgo: '1 week ago' },
-      { id: 'r1_2', studentName: 'Ahmad F.', lessonsTaken: 8, rating: 5, comment: 'The studio environment is very peaceful and conducive for learning traditional instruments.', timeAgo: '3 weeks ago' }
+      { id: 'r1_2', studentName: 'Ahmad F.', lessonsTaken: 8, rating: 5, comment: 'The studio environment is very peaceful and conducive for learning traditional instruments.', timeAgo: '3 weeks ago' },
+      { id: 'r1_3', studentName: 'Lina M.', lessonsTaken: 20, rating: 5, comment: 'I have learned so much about the history of Gambus. Highly recommended!', timeAgo: '1 month ago' }
     ],
-    credentials: ['Master of Arts (Music) - ASWARA', 'National Heritage Award 2022'],
+    credentials: ['Master of Arts (Music) - ASWARA', 'National Heritage Award 2022', '15+ Years of International Performance', 'Certified Traditional Music Instructor'],
     gallery: [
       'https://picsum.photos/seed/studio1/400/300',
       'https://picsum.photos/seed/studio2/400/300',
@@ -910,9 +911,10 @@ const MOCK_MENTORS: MentorDetail[] = [
     reviews: [
       { id: 'r3', studentName: 'Anjali D.', lessonsTaken: 20, rating: 5, comment: 'Guru Rajesh is a true master. His knowledge of rhythm is unparalleled.', timeAgo: '3 days ago' },
       { id: 'r3_2', studentName: 'Kevin L.', lessonsTaken: 10, rating: 5, comment: 'The Tabla sessions are intense but very rewarding. Highly recommend!', timeAgo: '2 weeks ago' },
-      { id: 'r3_3', studentName: 'Priya S.', lessonsTaken: 4, rating: 4.9, comment: 'Great atmosphere in the studio. Guru Rajesh makes complex rhythms easy to understand.', timeAgo: '1 month ago' }
+      { id: 'r3_3', studentName: 'Priya S.', lessonsTaken: 4, rating: 4.9, comment: 'Great atmosphere in the studio. Guru Rajesh makes complex rhythms easy to understand.', timeAgo: '1 month ago' },
+      { id: 'r3_4', studentName: 'Sanjay T.', lessonsTaken: 15, rating: 5, comment: 'Best Tabla teacher in KL. Very disciplined and thorough.', timeAgo: '2 months ago' }
     ],
-    credentials: ['Sangeet Visharad', 'Performed at Petronas Philharmonic Hall'],
+    credentials: ['Sangeet Visharad', 'Performed at Petronas Philharmonic Hall', 'Punjab Gharana Certified', '20+ Years Teaching Experience'],
     gallery: [
       'https://picsum.photos/seed/tabla1/400/300',
       'https://picsum.photos/seed/tabla2/400/300',
@@ -947,9 +949,10 @@ const MOCK_MENTORS: MentorDetail[] = [
     reviews: [
       { id: 'r4', studentName: 'Wei Kiat', lessonsTaken: 15, rating: 5, comment: 'Master Wong is very strict but his results are incredible.', timeAgo: '5 days ago' },
       { id: 'r4_2', studentName: 'Mei Ling', lessonsTaken: 8, rating: 4.7, comment: 'The Erhu has such a beautiful, haunting sound. Master Wong teaches with great precision.', timeAgo: '2 weeks ago' },
-      { id: 'r4_3', studentName: 'David T.', lessonsTaken: 12, rating: 5, comment: 'Excellent studio setup. The acoustics are perfect for Guzheng practice.', timeAgo: '1 month ago' }
+      { id: 'r4_3', studentName: 'David T.', lessonsTaken: 12, rating: 5, comment: 'Excellent studio setup. The acoustics are perfect for Guzheng practice.', timeAgo: '1 month ago' },
+      { id: 'r4_4', studentName: 'Sophie L.', lessonsTaken: 6, rating: 4.9, comment: 'I love how Master Wong explains the emotional depth of each piece.', timeAgo: '2 months ago' }
     ],
-    credentials: ['Central Conservatory of Music Graduate', 'Penang Arts Excellence Award'],
+    credentials: ['Central Conservatory of Music Graduate', 'Penang Arts Excellence Award', 'Former Lead Erhu - National Symphony', 'Published Author on Chinese Music Theory'],
     gallery: [
       'https://picsum.photos/seed/erhu1/400/300',
       'https://picsum.photos/seed/erhu2/400/300',
@@ -984,9 +987,10 @@ const MOCK_MENTORS: MentorDetail[] = [
     reviews: [
       { id: 'r5', studentName: 'Jasmine L.', lessonsTaken: 30, rating: 5, comment: 'Learning from a living legend is a dream come true.', timeAgo: '1 day ago' },
       { id: 'r5_2', studentName: 'Boon H.', lessonsTaken: 15, rating: 5, comment: 'The Sape music is so healing. Mathew is a wonderful storyteller and teacher.', timeAgo: '1 week ago' },
-      { id: 'r5_3', studentName: 'Elena R.', lessonsTaken: 6, rating: 4.8, comment: 'The studio is filled with beautiful handcrafted Sapes. A truly authentic experience.', timeAgo: '3 weeks ago' }
+      { id: 'r5_3', studentName: 'Elena R.', lessonsTaken: 6, rating: 4.8, comment: 'The studio is filled with beautiful handcrafted Sapes. A truly authentic experience.', timeAgo: '3 weeks ago' },
+      { id: 'r5_4', studentName: 'Chris M.', lessonsTaken: 10, rating: 5, comment: 'Mathew is not just a teacher, but a cultural ambassador. Incredible experience.', timeAgo: '1 month ago' }
     ],
-    credentials: ['National Living Heritage (Warisan Kebangsaan)', 'UNESCO Recognition'],
+    credentials: ['National Living Heritage (Warisan Kebangsaan)', 'UNESCO Recognition', 'Master Sape Maker', 'Honorary Doctorate in Arts'],
     gallery: [
       'https://picsum.photos/seed/sape1/400/300',
       'https://picsum.photos/seed/sape2/400/300',
@@ -3486,6 +3490,19 @@ export default function App() {
     );
     const coverImage = mentorInstrument?.photo || selectedMentor.photo;
 
+    const displayReviews = selectedMentor.reviews?.length > 0 ? selectedMentor.reviews : [
+      { id: 'mock-r1', studentName: 'Alex Tan', lessonsTaken: 8, rating: 5, comment: 'Incredible teacher! Very patient and knowledgeable about traditional techniques.', timeAgo: '2 days ago' },
+      { id: 'mock-r2', studentName: 'Sarah Lim', lessonsTaken: 15, rating: 4.9, comment: 'The lessons are well-structured and very engaging. I highly recommend!', timeAgo: '1 week ago' },
+      { id: 'mock-r3', studentName: 'John Doe', lessonsTaken: 4, rating: 5, comment: 'Great studio atmosphere and professional guidance.', timeAgo: '2 weeks ago' }
+    ];
+
+    const displayCredentials = selectedMentor.credentials?.length > 0 ? selectedMentor.credentials : [
+      'Certified Traditional Music Instructor',
+      '10+ Years of Professional Performance',
+      'Master of Arts in Cultural Heritage',
+      'Award-winning Instrumentalist'
+    ];
+
     return (
       <div className={`h-full flex flex-col ${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'} relative`}>
         <div className="flex-1 overflow-y-auto scrollbar-hide">
@@ -3615,10 +3632,10 @@ export default function App() {
               { id: 'packages', label: 'Lesson Packages', icon: Music2 },
               { id: 'path', label: 'Learning Path', icon: BookOpen },
               { id: 'schedule', label: 'View Schedule', icon: Calendar },
-              { id: 'gallery', label: 'Gallery', icon: ImageIcon },
+              { id: 'gallery', label: 'Studio Gallery', subtext: 'Images of the location/studio', icon: ImageIcon },
               { id: 'reviews', label: 'Student Reviews', icon: Star },
               { id: 'credentials', label: 'Credentials', icon: Award }
-            ].map((section) => (
+            ].map((section: any) => (
               <div key={section.id} id={`section-${section.id}`} className={`border-b pb-4 ${dark ? 'border-white/10' : 'border-black/5'}`}>
                 <button 
                   onClick={(e) => {
@@ -3638,7 +3655,10 @@ export default function App() {
                 >
                   <div className="flex items-center gap-3">
                     <section.icon size={18} className={dark ? 'text-white/40' : 'text-zinc-400'} />
-                    <span className={`text-sm font-bold ${dark ? 'text-white' : 'text-zinc-900'}`}>{section.label}</span>
+                    <div className="text-left">
+                      <span className={`text-sm font-bold block ${dark ? 'text-white' : 'text-zinc-900'}`}>{section.label}</span>
+                      {section.subtext && <span className={`text-[10px] block ${dark ? 'text-white/40' : 'text-zinc-500'}`}>{section.subtext}</span>}
+                    </div>
                   </div>
                   <motion.div animate={{ rotate: mentorProfileExpandedSection === section.id ? 180 : 0 }}>
                     <ChevronRight size={16} className={dark ? 'text-white/20' : 'text-zinc-300'} />
@@ -3685,7 +3705,7 @@ export default function App() {
                         )}
                         {section.id === 'reviews' && (
                           <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
-                            {selectedMentor.reviews.map(review => (
+                            {displayReviews.map(review => (
                               <div key={review.id} className={`min-w-[280px] p-5 border rounded-3xl ${dark ? 'bg-white/5 border-white/10' : 'bg-white border-zinc-100 shadow-sm'}`}>
                                 <div className="flex justify-between mb-3">
                                   <div>
@@ -3703,12 +3723,20 @@ export default function App() {
                         )}
                         {section.id === 'credentials' && (
                           <ul className="space-y-2">
-                            {selectedMentor.credentials.map(c => <li key={c} className="flex items-center gap-2 text-xs"><CheckCircle2 size={12} className="text-harbour-400" /> {c}</li>)}
+                            {displayCredentials.map(c => <li key={c} className="flex items-center gap-2 text-xs"><CheckCircle2 size={12} className="text-harbour-400" /> {c}</li>)}
                           </ul>
                         )}
                         {section.id === 'gallery' && (
-                          <div className="grid grid-cols-2 gap-2">
-                            {selectedMentor.gallery.map((img, i) => <img key={i} src={img || null} className="rounded-xl aspect-square object-cover" referrerPolicy="no-referrer" />)}
+                          <div className="space-y-4">
+                            <div className={`flex items-start gap-2 p-3 rounded-2xl ${dark ? 'bg-white/5' : 'bg-black/5'}`}>
+                              <MapPin size={14} className="mt-0.5 text-harbour-400 flex-shrink-0" />
+                              <p className={`text-[11px] leading-relaxed ${dark ? 'text-white/70' : 'text-zinc-600'}`}>
+                                {selectedMentor.address || selectedMentor.location}
+                              </p>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              {selectedMentor.gallery.map((img, i) => <img key={i} src={img || null} className="rounded-xl aspect-square object-cover" referrerPolicy="no-referrer" />)}
+                            </div>
                           </div>
                         )}
                         {section.id === 'path' && (

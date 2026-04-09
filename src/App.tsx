@@ -3053,7 +3053,7 @@ export default function App() {
     });
 
     return (
-      <div className="px-5 pt-12">
+      <div className={`h-full overflow-y-auto scrollbar-hide px-5 pt-12 ${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'}`}>
         <div className="flex items-center gap-4 mb-8">
           <button onClick={() => popStudentView()} className={`w-10 h-10 rounded-full flex items-center justify-center border ${dark ? 'bg-white/5 border-white/10 text-white' : 'bg-black/5 border-black/5 text-zinc-900'}`}>
             <ChevronLeft size={20} />
@@ -3398,7 +3398,7 @@ export default function App() {
             <div className="absolute top-[20%] left-[10%] w-[60%] h-[60%] bg-pine-dark/10 blur-[120px] rounded-full" />
           </div>
         )}
-        <div className={`flex-1 overflow-y-auto scrollbar-hide relative z-10 ${!['mentor-listing', 'mentor-profile', 'book-trial', 'book-paid', 'schedule-view'].includes(studentView) ? 'pb-24' : ''}`}>
+        <div className={`flex-1 relative z-10 ${['mentor-listing', 'mentor-profile', 'book-trial', 'book-paid', 'schedule-view'].includes(studentView) ? 'h-full overflow-hidden' : 'overflow-y-auto scrollbar-hide'} ${!['mentor-listing', 'mentor-profile', 'book-trial', 'book-paid', 'schedule-view'].includes(studentView) ? 'pb-24' : ''}`}>
           <AnimatePresence mode="wait">
             {studentView === 'home' && (
               <motion.div key="home" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -3406,12 +3406,12 @@ export default function App() {
               </motion.div>
             )}
             {studentView === 'mentor-listing' && (
-              <motion.div key="listing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              <motion.div key="listing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
                 <MentorListingView />
               </motion.div>
             )}
             {studentView === 'mentor-profile' && (
-              <motion.div key="mentor-profile" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              <motion.div key="mentor-profile" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
                 <MentorProfileView />
               </motion.div>
             )}
@@ -3504,8 +3504,8 @@ export default function App() {
     ];
 
     return (
-      <div className={`h-full flex flex-col ${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'} relative`}>
-        <div className="flex-1 overflow-y-auto scrollbar-hide">
+      <div className={`h-full flex flex-col ${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'} relative overflow-hidden`}>
+        <div className="flex-1 overflow-y-auto scrollbar-hide pb-40">
           <div className="relative h-64 overflow-hidden">
           {selectedMentor.introVideoUrl ? (
             <video
@@ -3766,7 +3766,7 @@ export default function App() {
       </div>
 
         {/* Sticky Bottom */}
-        <div className={`p-6 pb-10 backdrop-blur-2xl border-t flex flex-col gap-3 z-[110] ${dark ? 'bg-black/95 border-white/10' : 'bg-white/95 border-black/5'}`}>
+        <div className={`absolute bottom-0 left-0 right-0 p-6 pb-10 backdrop-blur-2xl border-t flex flex-col gap-3 z-[110] ${dark ? 'bg-black/95 border-white/10' : 'bg-white/95 border-black/5'}`}>
           <div className="flex items-center gap-3 w-full">
             {isStudent && (
               <button 

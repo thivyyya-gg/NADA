@@ -1592,7 +1592,7 @@ const BottomSheet = ({ isOpen, onClose, title, children, dark = true }: { isOpen
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 bg-black/60 z-[200]"
+          className="absolute inset-0 bg-black/60 z-[200]"
           onClick={onClose}
         />
         <motion.div
@@ -1600,7 +1600,7 @@ const BottomSheet = ({ isOpen, onClose, title, children, dark = true }: { isOpen
           animate={{ y: 0 }}
           exit={{ y: '100%' }}
           transition={{ type: 'tween', ease: [0.32, 0.72, 0, 1], duration: 0.35 }}
-          className={`fixed bottom-0 left-0 right-0 z-[201] rounded-t-[2.5rem] max-h-[92vh] overflow-y-auto ${dark ? 'bg-zinc-900 text-white' : 'bg-white text-zinc-900'}`}
+          className={`absolute bottom-0 left-0 right-0 z-[201] rounded-t-[2.5rem] max-h-[92vh] overflow-y-auto ${dark ? 'bg-zinc-900 text-white' : 'bg-white text-zinc-900'}`}
           onClick={e => e.stopPropagation()}
         >
           <div className={`w-12 h-1 rounded-full mx-auto my-4 ${dark ? 'bg-white/10' : 'bg-black/10'}`} />
@@ -1656,6 +1656,27 @@ const calculateProfileProgress = (profile: any) => {
     }
   });
   return total;
+};
+
+const PhoneFrame = ({ children }: { children: React.ReactNode }) => {
+  return (
+    <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4 sm:p-8">
+      <div className="relative w-full max-w-[400px] aspect-[9/19.5] bg-black rounded-[3.5rem] border-[12px] border-zinc-900 shadow-2xl overflow-hidden ring-1 ring-white/10">
+        {/* Notch/Dynamic Island area */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-7 bg-zinc-900 rounded-b-3xl z-[500] flex items-center justify-center">
+          <div className="w-12 h-1 bg-zinc-800 rounded-full" />
+        </div>
+        
+        {/* Content */}
+        <div className="absolute inset-0 overflow-hidden bg-atmospheric-dark">
+          {children}
+        </div>
+
+        {/* Home Indicator */}
+        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 w-32 h-1.5 bg-white/10 rounded-full z-[500] pointer-events-none" />
+      </div>
+    </div>
+  );
 };
 
 export default function App() {
@@ -3669,7 +3690,7 @@ export default function App() {
         </div>
 
         {/* Sticky Bottom */}
-        <div className={`fixed bottom-0 left-0 right-0 p-6 pb-10 backdrop-blur-2xl border-t flex items-center gap-4 z-[110] ${dark ? 'bg-black/95 border-white/10' : 'bg-white/95 border-black/5'}`}>
+        <div className={`absolute bottom-0 left-0 right-0 p-6 pb-10 backdrop-blur-2xl border-t flex items-center gap-4 z-[110] ${dark ? 'bg-black/95 border-white/10' : 'bg-white/95 border-black/5'}`}>
           {isStudent && (
             <button 
               onClick={() => {
@@ -4284,7 +4305,7 @@ export default function App() {
     };
 
     return (
-      <div className={`fixed inset-0 z-[150] flex flex-col ${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'}`}>
+      <div className={`absolute inset-0 z-[150] flex flex-col ${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'}`}>
         <div className={`px-5 pt-12 pb-4 flex items-center gap-4 border-b ${dark ? 'border-white/10' : 'border-zinc-100'}`}>
           <button onClick={onBack} className={`p-2 rounded-full ${dark ? 'bg-white/5 text-white' : 'bg-black/5 text-zinc-900'}`}>
             <ChevronLeft size={20} />
@@ -4853,7 +4874,7 @@ export default function App() {
 
         <AnimatePresence>
           {showAddCardModal && (
-            <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="absolute inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4">
               <motion.div 
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -4982,7 +5003,7 @@ export default function App() {
     ];
 
     const SplashView = () => (
-      <div className="relative h-screen w-full overflow-hidden bg-atmospheric-dark">
+      <div className="relative h-full w-full overflow-hidden bg-atmospheric-dark">
         {/* Atmospheric Glow */}
         <div className="absolute inset-0 pointer-events-none">
           <div className="absolute bottom-[-20%] right-[-10%] w-[80%] h-[80%] bg-seafoam-glow/20 blur-[150px] rounded-full" />
@@ -5075,7 +5096,7 @@ export default function App() {
     );
 
     const RoleSelectionView = () => (
-      <div className={`min-h-screen p-8 flex flex-col relative overflow-hidden ${isDark ? 'bg-atmospheric-dark text-white' : 'bg-zinc-50 text-zinc-900'}`}>
+      <div className={`min-h-full p-8 flex flex-col relative overflow-hidden ${isDark ? 'bg-atmospheric-dark text-white' : 'bg-zinc-50 text-zinc-900'}`}>
         {isDark && (
           <div className="absolute inset-0 pointer-events-none">
             <div className="absolute bottom-[-20%] right-[-10%] w-[80%] h-[80%] bg-seafoam-glow/20 blur-[150px] rounded-full" />
@@ -5177,7 +5198,7 @@ export default function App() {
       const strengthColor = strength <= 25 ? 'bg-red-500' : strength <= 50 ? 'bg-orange-500' : strength <= 75 ? 'bg-yellow-500' : 'bg-emerald-500';
 
       return (
-        <div className={`h-screen flex flex-col relative overflow-hidden ${isDark ? 'bg-atmospheric-dark text-white' : 'bg-zinc-50 text-zinc-900'}`}>
+        <div className={`h-full flex flex-col relative overflow-hidden ${isDark ? 'bg-atmospheric-dark text-white' : 'bg-zinc-50 text-zinc-900'}`}>
           {isDark && (
             <div className="absolute inset-0 pointer-events-none">
               <div className="absolute bottom-[-20%] right-[-10%] w-[80%] h-[80%] bg-seafoam-glow/20 blur-[150px] rounded-full" />
@@ -5308,7 +5329,7 @@ export default function App() {
       const [showPassword, setShowPassword] = useState(false);
 
       return (
-        <div className={`min-h-screen p-8 flex flex-col relative overflow-hidden ${isDark ? 'bg-atmospheric-dark text-white' : 'bg-zinc-50 text-zinc-900'}`}>
+        <div className={`min-h-full p-8 flex flex-col relative overflow-hidden ${isDark ? 'bg-atmospheric-dark text-white' : 'bg-zinc-50 text-zinc-900'}`}>
           {isDark && (
             <div className="absolute inset-0 pointer-events-none">
               <div className="absolute bottom-[-20%] right-[-10%] w-[80%] h-[80%] bg-seafoam-glow/20 blur-[150px] rounded-full" />
@@ -5428,7 +5449,7 @@ export default function App() {
 
     const ForgotPasswordView = () => {
       return (
-        <div className={`min-h-screen p-8 flex flex-col ${isDark ? 'bg-atmospheric-dark text-white' : 'bg-zinc-50 text-zinc-900'}`}>
+        <div className={`min-h-full p-8 flex flex-col ${isDark ? 'bg-atmospheric-dark text-white' : 'bg-zinc-50 text-zinc-900'}`}>
           <button onClick={() => setAuthView('sign-in')} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center mb-12">
             <ChevronLeft size={20} />
           </button>
@@ -5496,7 +5517,7 @@ export default function App() {
     };
 
     const ResetPasswordView = () => (
-      <div className={`min-h-screen p-8 flex flex-col ${isDark ? 'bg-atmospheric-dark text-white' : 'bg-zinc-50 text-zinc-900'}`}>
+      <div className={`min-h-full p-8 flex flex-col ${isDark ? 'bg-atmospheric-dark text-white' : 'bg-zinc-50 text-zinc-900'}`}>
         <div className="mb-10 pt-12">
           <h2 className="text-3xl font-serif-sturdy mb-2">Reset Password</h2>
           <p className="text-zinc-500 text-sm">Create a new secure password for your account.</p>
@@ -6305,7 +6326,7 @@ export default function App() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
               transition={{ type: 'tween', ease: 'easeOut', duration: 0.3 }}
-              className="fixed top-12 left-1/2 -translate-x-1/2 z-[300] w-[90%] max-w-[320px]"
+              className="absolute top-12 left-1/2 -translate-x-1/2 z-[300] w-[90%] max-w-[320px]"
             >
               <div className="bg-harbour-500 text-white p-4 rounded-2xl shadow-2xl flex items-center gap-3 border border-harbour-400">
                 <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center">
@@ -6473,7 +6494,7 @@ export default function App() {
         {/* Withdraw Modal */}
         <AnimatePresence>
           {showWithdrawModal && (
-            <div className="fixed inset-0 z-[200] flex items-end justify-center">
+            <div className="absolute inset-0 z-[200] flex items-end justify-center">
               <motion.div 
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -6895,7 +6916,7 @@ export default function App() {
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'tween', ease: 'easeOut', duration: 0.3 }}
-              className="fixed inset-0 z-[200] bg-white flex flex-col"
+              className="absolute inset-0 z-[200] bg-white flex flex-col"
             >
               <header className="px-6 pt-16 pb-6 flex items-center justify-between">
                 <button onClick={() => setIsEditingProfile(false)} className="w-12 h-12 rounded-2xl bg-zinc-100 flex items-center justify-center transition-transform">
@@ -6979,7 +7000,7 @@ export default function App() {
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'tween', ease: 'easeOut', duration: 0.3 }}
-              className="fixed inset-0 z-[200] bg-zinc-50 flex flex-col"
+              className="absolute inset-0 z-[200] bg-zinc-50 flex flex-col"
             >
               <header className="px-6 pt-16 pb-6 bg-zinc-900 flex items-center justify-between shadow-xl">
                 <button onClick={() => setShowSetupDetails(false)} className="w-12 h-12 rounded-2xl bg-white/10 text-white flex items-center justify-center transition-transform hover:bg-white/20">
@@ -7034,7 +7055,7 @@ export default function App() {
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'tween', ease: 'easeOut', duration: 0.3 }}
-              className="fixed inset-0 z-[300] bg-atmospheric-dark flex flex-col"
+              className="absolute inset-0 z-[300] bg-atmospheric-dark flex flex-col"
             >
               <header className="px-6 pt-16 pb-6 flex items-center justify-between border-b border-white/5">
                 <button onClick={() => setShowCompletionGuide(false)} className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center text-white">
@@ -7151,7 +7172,7 @@ export default function App() {
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'tween', ease: 'easeOut', duration: 0.3 }}
-              className="fixed inset-0 z-[300] bg-atmospheric-dark text-white flex flex-col"
+              className="absolute inset-0 z-[300] bg-atmospheric-dark text-white flex flex-col"
             >
               <header className="px-6 pt-16 pb-6 flex items-center justify-between border-b border-white/5">
                 <button onClick={() => setActiveSetupItem(null)} className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center transition-transform">
@@ -7733,14 +7754,14 @@ export default function App() {
     };
 
     return (
-      <div className="bg-white text-zinc-900 min-h-screen flex flex-col relative">
+      <div className="bg-white text-zinc-900 min-h-full flex flex-col relative">
         <AnimatePresence>
           {sessionSaveSuccess && (
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[100] bg-white flex flex-col items-center justify-center p-8 text-center"
+              className="absolute inset-0 z-[100] bg-white flex flex-col items-center justify-center p-8 text-center"
             >
               <motion.div 
                 initial={{ scale: 0.5, opacity: 0 }}
@@ -7985,7 +8006,7 @@ export default function App() {
     );
 
     return (
-      <div className="bg-zinc-50 min-h-screen flex flex-col">
+      <div className="bg-zinc-50 min-h-full flex flex-col">
         {/* Header — Dark Section */}
         <header className="bg-pine-950 text-white px-5 pt-16 pb-8 relative overflow-hidden">
           {/* Breadcrumb */}
@@ -8368,7 +8389,7 @@ export default function App() {
         </BottomSheet>
 
         {/* Sticky Bottom Bar */}
-        <div className="fixed bottom-0 left-0 right-0 p-5 bg-white/90 backdrop-blur-xl border-t border-zinc-100 z-50 flex gap-3">
+        <div className="absolute bottom-0 left-0 right-0 p-5 bg-white/90 backdrop-blur-xl border-t border-zinc-100 z-50 flex gap-3">
           <button 
             onClick={() => {
               const chat = MOCK_MESSAGES.find(m => m.studentId === selectedStudent.id);
@@ -8655,8 +8676,9 @@ export default function App() {
 
 
   return (
-    <div className={`h-screen font-sans transition-colors duration-500 overflow-hidden ${true ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'}`}>
-      <div className="max-w-md mx-auto h-full relative overflow-hidden flex flex-col">
+    <PhoneFrame>
+      <div className={`h-full font-sans transition-colors duration-500 overflow-hidden ${true ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'}`}>
+        <div className="w-full h-full relative overflow-hidden flex flex-col">
         {authLoading ? (
           <div className="h-full flex items-center justify-center bg-black">
             <div className="flex flex-col items-center gap-4">
@@ -9648,7 +9670,7 @@ export default function App() {
                 whileHover={{ scale: 1.05, y: -2 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => setShowAIBuddySheet(true)}
-                className="fixed bottom-24 right-6 w-14 h-14 rounded-full flex items-center justify-center text-white shadow-[0_0_30px_rgba(212,175,55,0.3)] z-[100] overflow-hidden group border-2 border-harbour-500"
+                className="absolute bottom-24 right-6 w-14 h-14 rounded-full flex items-center justify-center text-white shadow-[0_0_30px_rgba(212,175,55,0.3)] z-[100] overflow-hidden group border-2 border-harbour-500"
               >
                 {/* Solid Black Background */}
                 <div className="absolute inset-0 bg-black" />
@@ -9797,7 +9819,8 @@ export default function App() {
           );
         })()
       )}
+        </div>
       </div>
-    </div>
+    </PhoneFrame>
   );
 }

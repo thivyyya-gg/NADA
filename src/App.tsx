@@ -68,6 +68,8 @@ import {
   MessageCircle,
   Volume2,
   Eye,
+  Shield,
+  ShieldAlert,
   X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -192,6 +194,8 @@ interface MentorDetail {
   reviews: StudentReview[];
   credentials: string[];
   gallery: string[];
+  certifications?: any[];
+  idDocument?: string | null;
 }
 
 interface LessonPackage {
@@ -1683,10 +1687,12 @@ export default function App() {
     gallery: [],
     experienceYears: 0,
     studentsCount: 0,
-    rating: 5.0,
+    rating: 0.0,
     reviewCount: 0,
     isVerified: false,
-    packages: []
+    packages: [],
+    certifications: [],
+    idDocument: null
   });
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [authView, setAuthView] = useState<AuthView>('splash');
@@ -2658,21 +2664,44 @@ export default function App() {
     }
   };
 
-  const handleCancelLesson = async (lesson: any) => {
+  const handleCancelLesson = async (lesson: any, reason: string) => {
     if (!currentUser) return;
     try {
-      await updateDoc(doc(db, 'lessons', lesson.id), {
-        status: 'cancelled',
-        updatedAt: serverTimestamp()
-      });
+      const cancelledBy = isStudent ? 'student' : 'mentor';
+      
+      if (lesson.id.startsWith('l')) {
+        // Mock lesson update
+        setLessons(prev => prev.map(l => l.id === lesson.id ? { 
+          ...l, 
+          status: 'cancelled', 
+          cancelledBy,
+          cancelReason: reason 
+        } : l));
+      } else {
+        await updateDoc(doc(db, 'lessons', lesson.id), {
+          status: 'cancelled',
+          cancelledBy,
+          cancelReason: reason,
+          updatedAt: serverTimestamp()
+        });
+      }
 
       const targetId = currentUser.uid === lesson.studentId ? lesson.mentorId : lesson.studentId;
-      const cancellerName = userProfile?.name || 'Your partner';
+      const cancellerName = userProfile?.name || (isStudent ? 'Student' : 'Mentor');
+      
       await triggerNotification(
         targetId,
         'lesson_cancelled',
         'Lesson Cancelled',
-        `Your lesson with ${cancellerName} has been cancelled.`
+        `Your lesson with ${cancellerName} has been cancelled. Reason: ${reason}`
+      );
+
+      // Also notify self
+      await triggerNotification(
+        currentUser.uid,
+        'lesson_cancelled',
+        'Lesson Cancelled',
+        `You cancelled your lesson with ${lesson.studentName || 'Your partner'}.`
       );
     } catch (error) {
       console.error("Error cancelling lesson:", error);
@@ -2699,6 +2728,9 @@ export default function App() {
   const [showSetupDetails, setShowSetupDetails] = useState(false);
   const [mentorProfileExpandedSection, setMentorProfileExpandedSection] = useState<string | null>(null);
   const [sessionSaveSuccess, setSessionSaveSuccess] = useState(false);
+  const [newCert, setNewCert] = useState({ title: '', issuer: '', year: '' });
+  const [isAddingCert, setIsAddingCert] = useState(false);
+  const [idUploadStatus, setIdUploadStatus] = useState<'idle' | 'uploading' | 'success'>('idle');
 
   // Bottom Sheet States
   const [showScheduleSheet, setShowScheduleSheet] = useState(false);
@@ -2784,6 +2816,10 @@ export default function App() {
   const [reschedulingLesson, setReschedulingLesson] = useState<any | null>(null);
   const [selectedRescheduleDate, setSelectedRescheduleDate] = useState<string | null>(null);
   const [selectedRescheduleTime, setSelectedRescheduleTime] = useState<string | null>(null);
+  const [cancellingIds, setCancellingIds] = useState<string[]>([]);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [lessonToCancel, setLessonToCancel] = useState<any | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
 
   // Auth View States
   const [roleTab, setRoleTab] = useState<'student' | 'mentor'>('student');
@@ -2795,7 +2831,6 @@ export default function App() {
   }, [authView]);
 
   // Chat and Profile States
-  const [chatNewMessage, setChatNewMessage] = useState('');
   const [studentBio, setStudentBio] = useState("Traditional music enthusiast learning the strings of Malaysia.");
   const [isEditingStudentBio, setIsEditingStudentBio] = useState(false);
   const [studentNotificationsEnabled, setStudentNotificationsEnabled] = useState(true);
@@ -3335,7 +3370,7 @@ export default function App() {
         </div>
 
         {/* Bottom Nav */}
-        {!['mentor-listing', 'mentor-profile', 'book-trial', 'book-paid', 'schedule-view'].includes(studentView) && (
+        {!['mentor-listing', 'mentor-profile', 'book-trial', 'book-paid', 'schedule-view'].includes(studentView) && !selectedChat && (
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 w-[90%]">
             <div className="backdrop-blur-2xl border rounded-[2rem] px-2 py-1.5 flex items-center justify-between shadow-2xl transition-all duration-500 bg-zinc-900/90 border-white/10">
               {[
@@ -3699,11 +3734,15 @@ export default function App() {
 
     const upcomingLesson = studentLessons
       .filter(l => 
-        (l.status === 'confirmed' || l.status === 'pending' || l.status === 'reschedule_requested') && 
+        (l.status === 'confirmed' || l.status === 'pending' || l.status === 'reschedule_requested' || l.status === 'cancelled') && 
         new Date(l.date) >= new Date(new Date().setHours(0,0,0,0)) && 
         l.instrument === selectedInstrumentJourney
       )
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0];
+      .sort((a, b) => {
+        if (a.status === 'cancelled' && b.status !== 'cancelled') return 1;
+        if (a.status !== 'cancelled' && b.status === 'cancelled') return -1;
+        return new Date(a.date).getTime() - new Date(b.date).getTime();
+      })[0];
     
     // Dynamic instruments based on student's active lessons
     const activeInstruments = Array.from(new Set(studentLessons.map(l => l.instrument).filter(Boolean)));
@@ -3841,109 +3880,150 @@ export default function App() {
               </div>
 
               {upcomingLesson ? (
-                <div className="bg-white border border-zinc-100 rounded-[2.5rem] p-6 shadow-xl shadow-teal-500/5 relative overflow-hidden">
+                <div className={`rounded-[2.5rem] p-6 shadow-xl relative overflow-hidden border transition-all ${upcomingLesson.status === 'cancelled' ? 'bg-red-50/30 border-red-100 border-dashed opacity-90' : 'bg-white border-zinc-100 shadow-teal-500/5'}`}>
+                  {upcomingLesson.status === 'cancelled' && (
+                    <div className="absolute top-4 right-6 z-10">
+                      <motion.div 
+                        initial={{ scale: 0.9, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        className="px-3 py-1 bg-red-500 text-white text-[8px] font-bold uppercase tracking-widest rounded-full shadow-lg shadow-red-500/20 flex items-center gap-1.5"
+                      >
+                        <XCircle size={10} />
+                        Cancelled by {upcomingLesson.cancelledBy === 'student' ? 'You' : 'Mentor'}
+                      </motion.div>
+                    </div>
+                  )}
+                  
                   <div className="flex justify-between items-start mb-6">
                     <div className="flex gap-4 items-center">
-                      <Avatar name={upcomingLesson.mentorName} photo={realMentors.find(m => m.id === upcomingLesson.mentorId)?.photo || mentor.photo} size="md" className="rounded-xl shadow-md" />
+                      <Avatar 
+                        name={upcomingLesson.mentorName} 
+                        photo={realMentors.find(m => m.id === upcomingLesson.mentorId)?.photo || mentor.photo} 
+                        size="md" 
+                        className={`rounded-xl shadow-md ${upcomingLesson.status === 'cancelled' ? 'grayscale opacity-50' : ''}`} 
+                      />
                       <div>
-                        <h3 className="font-serif text-lg text-zinc-900">{upcomingLesson.mentorName}</h3>
+                        <h3 className={`font-serif text-lg ${upcomingLesson.status === 'cancelled' ? 'text-red-900/50' : 'text-zinc-900'}`}>{upcomingLesson.mentorName}</h3>
                         <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-400">{upcomingLesson.instrument} • Lesson #{filteredLogs.length + 1}</p>
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-2">
-                      <div className={`px-3 py-1.5 rounded-full text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5 ${
-                        upcomingLesson.status === 'confirmed' ? 'bg-emerald-500 text-white' : 
-                        upcomingLesson.status === 'reschedule_requested' ? 'bg-indigo-500 text-white' :
-                        'bg-amber-500 text-white'
-                      }`}>
-                        {upcomingLesson.status === 'confirmed' ? <CheckCircle2 size={10} /> : <Clock size={10} />}
-                        {upcomingLesson.status.replace('_', ' ')}
-                      </div>
-                      <div className="text-[8px] font-bold text-zinc-400 uppercase tracking-widest">
-                        {Math.ceil((new Date(upcomingLesson.date).getTime() - new Date().getTime()) / 86400000)} Days Away
-                      </div>
+                      {cancellingIds.includes(upcomingLesson.id) && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: -10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="px-3 py-1 bg-red-500 text-white text-[8px] font-bold uppercase tracking-widest rounded-full flex items-center gap-1.5 shadow-lg shadow-red-500/20"
+                        >
+                          <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
+                          Lesson Cancelling
+                        </motion.div>
+                      )}
+                      {!cancellingIds.includes(upcomingLesson.id) && upcomingLesson.status !== 'cancelled' && (
+                        <div className={`px-3 py-1.5 rounded-full text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5 ${
+                          upcomingLesson.status === 'confirmed' ? 'bg-emerald-500 text-white' : 
+                          upcomingLesson.status === 'reschedule_requested' ? 'bg-indigo-500 text-white' :
+                          'bg-amber-500 text-white'
+                        }`}>
+                          {upcomingLesson.status === 'confirmed' ? <CheckCircle2 size={10} /> : <Clock size={10} />}
+                          {upcomingLesson.status.replace('_', ' ')}
+                        </div>
+                      )}
+                      {upcomingLesson.status !== 'cancelled' && (
+                        <div className="text-[8px] font-bold text-zinc-400 uppercase tracking-widest">
+                          {Math.ceil((new Date(upcomingLesson.date).getTime() - new Date().getTime()) / 86400000)} Days Away
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  {upcomingLesson.status === 'reschedule_requested' && upcomingLesson.requestedBy !== currentUser?.uid && (
-                    <div className="mb-6 p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
-                      <p className="text-[10px] font-bold text-indigo-900 mb-2">Reschedule Request</p>
-                      <p className="text-[10px] text-indigo-700 mb-3">
-                        Requested for: <span className="font-bold">{new Date(upcomingLesson.requestedDate).toLocaleDateString()} at {upcomingLesson.requestedTime}</span>
-                      </p>
-                      <div className="flex gap-2">
+                  {upcomingLesson.status === 'cancelled' ? (
+                    <div className="bg-red-50/50 border border-red-100 rounded-2xl p-4 mb-2">
+                      <p className="text-[8px] font-bold uppercase tracking-widest text-red-400 mb-1">Reason for cancellation</p>
+                      <p className="text-xs text-red-900/70 italic">"{upcomingLesson.cancelReason || 'No reason provided'}"</p>
+                    </div>
+                  ) : (
+                    <>
+                      {upcomingLesson.status === 'reschedule_requested' && upcomingLesson.requestedBy !== currentUser?.uid && (
+                        <div className="mb-6 p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
+                          <p className="text-[10px] font-bold text-indigo-900 mb-2">Reschedule Request</p>
+                          <p className="text-[10px] text-indigo-700 mb-3">
+                            Requested for: <span className="font-bold">{new Date(upcomingLesson.requestedDate).toLocaleDateString()} at {upcomingLesson.requestedTime}</span>
+                          </p>
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => handleRescheduleAction(upcomingLesson, 'accept')}
+                              className="flex-1 py-2 bg-indigo-600 text-white text-[9px] font-bold uppercase tracking-widest rounded-lg"
+                            >
+                              Accept
+                            </button>
+                            <button 
+                              onClick={() => handleRescheduleAction(upcomingLesson, 'decline')}
+                              className="flex-1 py-2 bg-white border border-indigo-200 text-indigo-600 text-[9px] font-bold uppercase tracking-widest rounded-lg"
+                            >
+                              Decline
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {upcomingLesson.status === 'reschedule_requested' && upcomingLesson.requestedBy === currentUser?.uid && (
+                        <div className="mb-6 p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                          <p className="text-[10px] font-bold text-zinc-500">Reschedule Pending</p>
+                          <p className="text-[10px] text-zinc-400">Waiting for mentor to confirm your request for {new Date(upcomingLesson.requestedDate).toLocaleDateString()} at {upcomingLesson.requestedTime}.</p>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-3 mb-6">
+                        <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100">
+                          <p className="text-[8px] font-bold uppercase tracking-widest text-zinc-400 mb-1">Date & Time</p>
+                          <p className="text-xs font-bold text-zinc-900">{new Date(upcomingLesson.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} • {upcomingLesson.time}</p>
+                        </div>
+                        <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100">
+                          <p className="text-[8px] font-bold uppercase tracking-widest text-zinc-400 mb-1">Location</p>
+                          <p className="text-xs font-bold text-zinc-900 truncate">{upcomingLesson.location || 'Bangsar Studio'}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3">
                         <button 
-                          onClick={() => handleRescheduleAction(upcomingLesson, 'accept')}
-                          className="flex-1 py-2 bg-indigo-600 text-white text-[9px] font-bold uppercase tracking-widest rounded-lg"
+                          onClick={() => {
+                            const mentorObj = realMentors.find(m => m.id === upcomingLesson.mentorId) || mentor;
+                            setSelectedChat({
+                              id: `new-${mentorObj.id}`,
+                              conversationId: null,
+                              name: mentorObj.name,
+                              photo: mentorObj.photo,
+                              role: 'Mentor',
+                              recipientId: mentorObj.id
+                            });
+                            switchStudentTab('messages');
+                          }}
+                          className="flex-1 py-4 bg-zinc-900 text-white text-[10px] font-bold uppercase tracking-widest rounded-full shadow-lg shadow-black/10 transition-transform active:scale-95"
                         >
-                          Accept
+                          Message
                         </button>
                         <button 
-                          onClick={() => handleRescheduleAction(upcomingLesson, 'decline')}
-                          className="flex-1 py-2 bg-white border border-indigo-200 text-indigo-600 text-[9px] font-bold uppercase tracking-widest rounded-lg"
+                          onClick={() => {
+                            setReschedulingLesson(upcomingLesson);
+                            setShowRescheduleModal(true);
+                          }}
+                          className="flex-1 py-4 border border-zinc-200 text-zinc-900 text-[10px] font-bold uppercase tracking-widest rounded-full transition-colors hover:bg-zinc-50 active:scale-95"
                         >
-                          Decline
+                          Reschedule
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setLessonToCancel(upcomingLesson);
+                            setShowCancelModal(true);
+                          }}
+                          disabled={cancellingIds.includes(upcomingLesson.id)}
+                          className={`w-12 h-12 flex items-center justify-center border rounded-full transition-all ${cancellingIds.includes(upcomingLesson.id) ? 'bg-red-500 border-red-500 text-white animate-pulse' : 'border-red-100 text-red-500 hover:bg-red-50'}`}
+                        >
+                          {cancellingIds.includes(upcomingLesson.id) ? <Clock size={18} /> : <X size={18} />}
                         </button>
                       </div>
-                    </div>
+                    </>
                   )}
-
-                  {upcomingLesson.status === 'reschedule_requested' && upcomingLesson.requestedBy === currentUser?.uid && (
-                    <div className="mb-6 p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
-                      <p className="text-[10px] font-bold text-zinc-500">Reschedule Pending</p>
-                      <p className="text-[10px] text-zinc-400">Waiting for mentor to confirm your request for {new Date(upcomingLesson.requestedDate).toLocaleDateString()} at {upcomingLesson.requestedTime}.</p>
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-2 gap-3 mb-6">
-                    <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100">
-                      <p className="text-[8px] font-bold uppercase tracking-widest text-zinc-400 mb-1">Date & Time</p>
-                      <p className="text-xs font-bold text-zinc-900">{new Date(upcomingLesson.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} • {upcomingLesson.time}</p>
-                    </div>
-                    <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100">
-                      <p className="text-[8px] font-bold uppercase tracking-widest text-zinc-400 mb-1">Location</p>
-                      <p className="text-xs font-bold text-zinc-900 truncate">{upcomingLesson.location || 'Bangsar Studio'}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-3">
-                    <button 
-                      onClick={() => {
-                        const mentorObj = realMentors.find(m => m.id === upcomingLesson.mentorId) || mentor;
-                        setSelectedChat({
-                          id: `new-${mentorObj.id}`,
-                          conversationId: null,
-                          name: mentorObj.name,
-                          photo: mentorObj.photo,
-                          role: 'Mentor',
-                          recipientId: mentorObj.id
-                        });
-                        switchStudentTab('messages');
-                      }}
-                      className="flex-1 py-4 bg-zinc-900 text-white text-[10px] font-bold uppercase tracking-widest rounded-full shadow-lg shadow-black/10 transition-transform active:scale-95"
-                    >
-                      Message
-                    </button>
-                    <button 
-                      onClick={() => {
-                        setReschedulingLesson(upcomingLesson);
-                        setShowRescheduleModal(true);
-                      }}
-                      className="flex-1 py-4 border border-zinc-200 text-zinc-900 text-[10px] font-bold uppercase tracking-widest rounded-full transition-colors hover:bg-zinc-50 active:scale-95"
-                    >
-                      Reschedule
-                    </button>
-                    <button 
-                      onClick={() => {
-                        if (window.confirm('Are you sure you want to cancel this session?')) {
-                          handleCancelLesson(upcomingLesson);
-                        }
-                      }}
-                      className="w-12 h-12 flex items-center justify-center border border-red-100 text-red-500 rounded-full hover:bg-red-50 transition-colors"
-                    >
-                      <X size={18} />
-                    </button>
-                  </div>
                 </div>
               ) : (
                 <div className="bg-white border border-zinc-100 border-dashed rounded-[2.5rem] p-8 flex flex-col items-center justify-center text-center gap-4">
@@ -4181,70 +4261,14 @@ export default function App() {
           </div>
         )}
 
-        {/* Reschedule Modal */}
-        <BottomSheet isOpen={showRescheduleModal} onClose={() => {
-          setShowRescheduleModal(false);
-          setReschedulingLesson(null);
-          setSelectedRescheduleDate(null);
-          setSelectedRescheduleTime(null);
-        }}>
-          <div className="px-6 pb-10">
-            <h3 className="text-2xl font-serif mb-2">Reschedule Session</h3>
-            <p className="text-sm text-zinc-500 mb-8">Pick a new date and time for your session.</p>
-            
-            <div className="space-y-6">
-              <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
-                {dates.map((date, i) => {
-                  const dateStr = date.toISOString().split('T')[0];
-                  const isSelected = selectedRescheduleDate === dateStr;
-                  return (
-                    <button 
-                      key={i}
-                      onClick={() => setSelectedRescheduleDate(dateStr)}
-                      className={`flex-shrink-0 w-12 py-4 rounded-2xl flex flex-col items-center gap-1 transition-all ${isSelected ? 'bg-zinc-900 text-white shadow-lg' : 'bg-zinc-50 text-zinc-400'}`}
-                    >
-                      <span className="text-[8px] uppercase font-bold">{days[date.getDay()]}</span>
-                      <span className="text-sm font-bold">{date.getDate()}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              
-              <div className="grid grid-cols-3 gap-2">
-                {['10:00', '11:00', '14:00', '15:00', '16:00', '17:00'].map(time => {
-                  const isSelected = selectedRescheduleTime === time;
-                  return (
-                    <button 
-                      key={time} 
-                      onClick={() => setSelectedRescheduleTime(time)}
-                      className={`py-3.5 rounded-xl border text-[11px] font-bold transition-all ${isSelected ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white border-zinc-100 text-zinc-400'}`}
-                    >
-                      {time}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <button 
-                onClick={() => {
-                  if (reschedulingLesson && selectedRescheduleDate && selectedRescheduleTime) {
-                    handleRescheduleRequest(reschedulingLesson, selectedRescheduleDate, selectedRescheduleTime);
-                  }
-                }}
-                disabled={!selectedRescheduleDate || !selectedRescheduleTime}
-                className={`w-full py-5 text-white font-bold rounded-full mt-6 shadow-lg active:scale-95 transition-transform ${(!selectedRescheduleDate || !selectedRescheduleTime) ? 'bg-zinc-300 cursor-not-allowed' : 'bg-teal-500 shadow-teal-500/20'}`}
-              >
-                Confirm New Time
-              </button>
-            </div>
-          </div>
-        </BottomSheet>
+        {/* Reschedule Modal moved to main App return */}
       </div>
     );
   };
 
   const ChatConversation = ({ recipient, onBack, dark = true }: { recipient: any, onBack: () => void, dark?: boolean }) => {
     const scrollRef = useRef<HTMLDivElement>(null);
+    const [localMessage, setLocalMessage] = useState('');
 
     useEffect(() => {
       if (scrollRef.current) {
@@ -4253,9 +4277,9 @@ export default function App() {
     }, [messages]);
 
     const handleSend = async () => {
-      if (!chatNewMessage.trim()) return;
-      const text = chatNewMessage;
-      setChatNewMessage(''); // Clear input immediately
+      if (!localMessage.trim()) return;
+      const text = localMessage;
+      setLocalMessage(''); // Clear input immediately
       await handleSendMessage(text);
     };
 
@@ -4303,8 +4327,8 @@ export default function App() {
         <div className={`p-5 pb-6 border-t ${dark ? 'border-white/10' : 'border-zinc-100'}`}>
           <div className="relative">
             <input 
-              value={chatNewMessage}
-              onChange={(e) => setChatNewMessage(e.target.value)}
+              value={localMessage}
+              onChange={(e) => setLocalMessage(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSend()}
               onFocus={(e) => e.stopPropagation()}
               placeholder="Type a message..."
@@ -5575,68 +5599,70 @@ export default function App() {
               </div>
               <div className="space-y-3">
                 {lessons.filter(l => (l.status === 'pending' || (l.status === 'reschedule_requested' && l.requestedBy !== currentUser?.uid))).length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-40 gap-2">
-                    <Inbox size={28} className={isDark ? "text-white/20" : "text-zinc-200"} />
-                    <p className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? "text-white/40" : "text-zinc-400"}`}>No pending requests</p>
+                  <div className="flex flex-col items-center justify-center h-48 gap-4 bg-white border border-zinc-200 rounded-[2.5rem] shadow-sm">
+                    <div className="w-16 h-16 bg-zinc-50 rounded-2xl flex items-center justify-center text-zinc-200">
+                      <Inbox size={32} />
+                    </div>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">No pending requests</p>
                   </div>
                 ) : (
                   lessons.filter(l => (l.status === 'pending' || (l.status === 'reschedule_requested' && l.requestedBy !== currentUser?.uid))).map(request => {
                     const student = realStudents.find(s => s.id === request.studentId) || MOCK_STUDENTS.find(s => s.id === request.studentId);
                     const resolvedStudentName = student?.name || (request.studentName && request.studentName !== 'Student' ? request.studentName : null) || `Student (${request.studentId?.slice(0,6) || '?'})`;
                     return (
-                      <div key={request.id} className={`border p-4 rounded-2xl transition-all hover:shadow-lg ${isDark ? 'bg-white/5 border-white/10 hover:bg-white/[0.07]' : 'bg-white border-zinc-200 hover:border-zinc-300 shadow-sm'}`}>
+                      <div key={request.id} className="bg-white border border-zinc-200 p-5 rounded-[2rem] transition-all hover:shadow-xl hover:border-zinc-300 shadow-md group">
                         <div className="flex justify-between items-start mb-4">
-                          <div className="flex gap-3 items-center">
+                          <div className="flex gap-4 items-center">
                             {/* Student Photo */}
                             <Avatar 
                               name={resolvedStudentName} 
                               photo={student?.photo} 
                               size="md" 
-                              className={`border ${isDark ? 'border-white/10' : 'border-zinc-200'}`} 
+                              className="border border-zinc-100 shadow-sm" 
                             />
                             
                             <div className="min-w-0">
                               <div className="flex items-center gap-2 mb-0.5">
-                                <h3 className={`text-sm font-bold tracking-tight truncate ${isDark ? 'text-white' : 'text-zinc-900'}`}>{resolvedStudentName}</h3>
+                                <h3 className="text-sm font-bold tracking-tight truncate text-zinc-900">{resolvedStudentName}</h3>
                                 <Badge variant={request.type === 'Trial' ? 'gold' : request.type === 'Monthly' ? 'harbour' : 'outline'}>
                                   {request.type}
                                 </Badge>
                               </div>
                               <div className="flex items-center gap-1.5">
-                                <p className={`text-[9px] font-medium ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>{request.instrument}</p>
-                                <span className={`w-0.5 h-0.5 rounded-full ${isDark ? 'bg-white/20' : 'bg-zinc-300'}`} />
-                                <p className={`text-[9px] font-medium ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>New Student</p>
+                                <p className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">{request.instrument}</p>
+                                <span className="w-1 h-1 bg-zinc-300 rounded-full" />
+                                <p className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider">New Student</p>
                               </div>
                             </div>
                           </div>
                           <button 
                             onClick={() => setActiveLessonAction(request)}
-                            className={`p-1 ${isDark ? 'text-white/40' : 'text-zinc-400'}`}
+                            className="p-2 text-zinc-300 hover:text-zinc-900 transition-colors"
                           >
-                            <MoreVertical size={16} />
+                            <MoreVertical size={18} />
                           </button>
                         </div>
 
                         {/* Requested Time Slot */}
-                        <div className={`border rounded-xl p-3 mb-4 flex items-center justify-between ${isDark ? 'bg-white/[0.03] border-white/5' : 'bg-zinc-50 border-zinc-100'}`}>
+                        <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-4 mb-4 flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isDark ? 'bg-white/10 text-white/60' : 'bg-zinc-200 text-zinc-600'}`}>
-                              <Calendar size={14} />
+                            <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-zinc-400 shadow-sm">
+                              <Calendar size={18} />
                             </div>
                             <div>
-                              <p className={`text-[10px] font-bold uppercase tracking-tighter ${isDark ? 'text-white/60' : 'text-zinc-500'}`}>
+                              <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-400">
                                 {request.status === 'reschedule_requested' ? 'Reschedule Requested For' : new Date(request.date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
                               </p>
-                              <p className={`text-sm font-serif-curvy italic leading-none mt-0.5 ${isDark ? 'text-white' : 'text-zinc-900'}`}>{request.status === 'reschedule_requested' ? `${new Date(request.requestedDate).toLocaleDateString()} at ${request.requestedTime}` : request.time}</p>
+                              <p className="text-sm font-serif-curvy italic leading-none mt-1 text-zinc-900">{request.status === 'reschedule_requested' ? `${new Date(request.requestedDate).toLocaleDateString()} at ${request.requestedTime}` : request.time}</p>
                             </div>
                           </div>
                         </div>
 
                         {/* Student Note */}
                         {request.studentNote && (
-                          <div className={`mb-4 p-3 rounded-xl border-l-2 border-harbour-500 ${isDark ? 'bg-white/[0.03]' : 'bg-zinc-50'}`}>
-                            <p className={`text-[8px] font-mono uppercase tracking-widest mb-1 ${isDark ? 'text-white/30' : 'text-zinc-400'}`}>Student Note</p>
-                            <p className={`text-[10px] leading-relaxed ${isDark ? 'text-white/70' : 'text-zinc-600'}`}>"{request.studentNote}"</p>
+                          <div className="mb-5 p-4 rounded-2xl border-l-4 border-harbour-500 bg-zinc-50/50">
+                            <p className="text-[8px] font-bold uppercase tracking-widest mb-1.5 text-zinc-400">Student Note</p>
+                            <p className="text-[11px] leading-relaxed text-zinc-600 font-medium italic">"{request.studentNote}"</p>
                           </div>
                         )}
 
@@ -5649,9 +5675,9 @@ export default function App() {
                                 setView('messages');
                               }
                             }}
-                            className={`w-12 border flex items-center justify-center rounded-full transition-colors ${isDark ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-zinc-100 border-zinc-200 text-zinc-900 hover:bg-zinc-200'}`}
+                            className="w-14 h-12 bg-zinc-100 border border-zinc-200 flex items-center justify-center rounded-2xl text-zinc-900 hover:bg-zinc-200 transition-all shadow-sm"
                           >
-                            <MessageSquare size={16} />
+                            <MessageSquare size={18} />
                           </button>
                           <button 
                             onClick={async () => {
@@ -5670,7 +5696,7 @@ export default function App() {
                                 }
                               }
                             }}
-                            className="flex-1 bg-harbour-600 text-white text-[10px] font-bold py-3 rounded-full hover:bg-harbour-500 transition-colors shadow-lg shadow-harbour-600/20"
+                            className="flex-1 bg-zinc-900 text-white text-[10px] font-bold py-3 rounded-2xl hover:bg-black transition-all shadow-lg shadow-zinc-900/10"
                           >
                             {request.status === 'reschedule_requested' ? 'Accept Reschedule' : 'Accept Request'}
                           </button>
@@ -5692,7 +5718,7 @@ export default function App() {
                                 }
                               }
                             }}
-                            className={`flex-1 border text-[10px] font-bold py-3 rounded-full transition-colors ${isDark ? 'border-white/10 text-white hover:bg-white/5' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
+                            className="flex-1 border border-zinc-200 bg-white text-zinc-500 text-[10px] font-bold py-3 rounded-2xl hover:bg-zinc-50 transition-all"
                           >
                             Decline
                           </button>
@@ -5705,50 +5731,8 @@ export default function App() {
             </section>
           ) : (
             <section className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-              {/* Upcoming Lessons Section */}
-              <div className="mb-8">
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className={`text-[9px] uppercase tracking-widest font-bold ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>Upcoming Lessons</h2>
-                  <button 
-                    onClick={() => setView('full-schedule')}
-                    className="text-[9px] font-bold text-harbour-500 hover:text-harbour-400 transition-colors flex items-center gap-1"
-                  >
-                    See all <ChevronRight size={10} />
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  {lessons
-                    .filter(l => l.status === 'confirmed' && new Date(l.date) >= new Date(new Date().setHours(0,0,0,0)))
-                    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-                    .slice(0, 3)
-                    .map(lesson => {
-                      const student = realStudents.find(s => s.id === lesson.studentId) || MOCK_STUDENTS.find(s => s.id === lesson.studentId);
-                      const resolvedStudentName = student?.name || (lesson.studentName && lesson.studentName !== 'Student' ? lesson.studentName : null) || `Student (${lesson.studentId?.slice(0,6) || '?'})`;
-                      return (
-                        <div key={lesson.id} className={`p-3 rounded-xl border flex items-center justify-between ${isDark ? 'bg-white/5 border-white/10' : 'bg-white border-zinc-100 shadow-sm'}`}>
-                          <div className="flex items-center gap-3">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isDark ? 'bg-white/10 text-white/60' : 'bg-zinc-100 text-zinc-500'}`}>
-                              <Calendar size={14} />
-                            </div>
-                            <div>
-                              <p className={`text-[10px] font-bold ${isDark ? 'text-white' : 'text-zinc-900'}`}>{resolvedStudentName}</p>
-                              <p className={`text-[8px] ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>{new Date(lesson.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} • {lesson.time}</p>
-                            </div>
-                          </div>
-                          <ChevronRight size={12} className={isDark ? "text-white/20" : "text-zinc-300"} />
-                        </div>
-                      );
-                    })}
-                  {lessons.filter(l => l.status === 'confirmed').length === 0 && (
-                    <div className={`p-4 rounded-xl border border-dashed text-center ${isDark ? 'border-white/10 bg-white/5' : 'border-zinc-200 bg-zinc-50'}`}>
-                      <p className={`text-[9px] font-bold uppercase tracking-widest ${isDark ? 'text-white/30' : 'text-zinc-400'}`}>No confirmed lessons</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
               <div className="flex items-center justify-between mb-3">
-                <h2 className={`text-[9px] uppercase tracking-widest font-bold ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>Schedule</h2>
+                <h2 className={`text-[9px] uppercase tracking-widest font-bold ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>Upcoming Schedule</h2>
                 <button 
                   onClick={() => setView('full-schedule')}
                   className="text-[9px] font-bold text-harbour-500 hover:text-harbour-400 transition-colors flex items-center gap-1"
@@ -5757,87 +5741,155 @@ export default function App() {
                 </button>
               </div>
               <div className="space-y-3">
-                {lessons.filter(l => l.status === 'confirmed').length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-40 gap-2">
-                    <Calendar size={28} className={isDark ? "text-white/20" : "text-zinc-200"} />
-                    <p className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? "text-white/40" : "text-zinc-400"}`}>No lessons today</p>
+                {lessons.filter(l => (l.status === 'confirmed' || l.status === 'cancelled') && new Date(l.date) >= new Date(new Date().setHours(0,0,0,0))).length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-48 gap-4 bg-white border border-zinc-200 rounded-[2.5rem] shadow-sm">
+                    <div className="w-16 h-16 bg-zinc-50 rounded-2xl flex items-center justify-center text-zinc-200">
+                      <Calendar size={32} />
+                    </div>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">No upcoming lessons</p>
                   </div>
                 ) : (
-                  lessons.filter(l => l.status === 'confirmed').map(lesson => {
-                    const student = realStudents.find(s => s.id === lesson.studentId) || MOCK_STUDENTS.find(s => s.id === lesson.studentId);
-                    const resolvedStudentName = student?.name || (lesson.studentName && lesson.studentName !== 'Student' ? lesson.studentName : null) || `Student (${lesson.studentId?.slice(0,6) || '?'})`;
-                    return (
-                      <div key={lesson.id} className={`border p-4 rounded-2xl relative group transition-transform ${isDark ? 'bg-white/5 border-white/10' : 'bg-white border-zinc-200 shadow-sm'}`}>
-                        <div className="flex justify-between items-start mb-4">
-                          <div className="flex gap-3 items-center">
+                  lessons
+                    .filter(l => (l.status === 'confirmed' || l.status === 'cancelled') && new Date(l.date) >= new Date(new Date().setHours(0,0,0,0)))
+                    .sort((a, b) => {
+                      if (a.status === 'cancelled' && b.status !== 'cancelled') return 1;
+                      if (a.status !== 'cancelled' && b.status === 'cancelled') return -1;
+                      return new Date(a.date).getTime() - new Date(b.date).getTime();
+                    })
+                    .map(lesson => {
+                      const student = realStudents.find(s => s.id === lesson.studentId) || MOCK_STUDENTS.find(s => s.id === lesson.studentId);
+                      const resolvedStudentName = student?.name || (lesson.studentName && lesson.studentName !== 'Student' ? lesson.studentName : null) || `Student (${lesson.studentId?.slice(0,6) || '?'})`;
+                      const isCancelled = lesson.status === 'cancelled';
+                      
+                      return (
+                      <div key={lesson.id} className={`p-6 rounded-[2.5rem] relative group transition-all shadow-md ${isCancelled ? 'bg-red-50/30 border-red-100 border-dashed opacity-90' : 'bg-white border-zinc-200 hover:shadow-xl'}`}>
+                        {isCancelled && (
+                          <div className="absolute top-4 right-6 z-10">
+                            <motion.div 
+                              initial={{ scale: 0.9, opacity: 0 }}
+                              animate={{ scale: 1, opacity: 1 }}
+                              className="px-3 py-1 bg-red-500 text-white text-[8px] font-bold uppercase tracking-widest rounded-full shadow-lg shadow-red-500/20 flex items-center gap-1.5"
+                            >
+                              <XCircle size={10} />
+                              Cancelled by {lesson.cancelledBy === 'mentor' ? 'You' : 'Student'}
+                            </motion.div>
+                          </div>
+                        )}
+                        
+                        <div className="flex justify-between items-start mb-5">
+                          <div className="flex gap-4 items-center">
                             {/* Student Photo */}
                             <div className="relative">
                               <Avatar 
                                 name={resolvedStudentName} 
                                 photo={student?.photo} 
-                                size="md" 
-                                className={`border-2 ${isDark ? 'border-white/10' : 'border-zinc-100'} shadow-lg`} 
+                                size="lg" 
+                                className={`border-2 shadow-md ${isCancelled ? 'border-red-100 grayscale' : 'border-zinc-50'}`} 
                               />
-                              <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-harbour-600 border-2 border-[#0A0A0A] rounded-full shadow-sm" />
+                              {!isCancelled && <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-emerald-500 border-2 border-white rounded-full shadow-sm" />}
                             </div>
                             
                             <div className="min-w-0">
                               <div className="flex items-center gap-2 mb-1">
-                                <h3 className={`text-sm font-bold tracking-tight truncate ${isDark ? 'text-white' : 'text-zinc-900'}`}>{resolvedStudentName}</h3>
-                                <Badge variant={lesson.type === 'Trial' ? 'gold' : lesson.type === 'Monthly' ? 'harbour' : 'outline'}>
-                                  {lesson.type}
-                                </Badge>
+                                <h3 className={`text-lg font-bold tracking-tight truncate ${isCancelled ? 'text-red-900/50' : 'text-zinc-900'}`}>{resolvedStudentName}</h3>
+                                {cancellingIds.includes(lesson.id) ? (
+                                  <motion.div 
+                                    initial={{ opacity: 0, x: -10 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    className="px-2 py-0.5 bg-red-500 text-white text-[7px] font-bold uppercase tracking-widest rounded-full flex items-center gap-1 shadow-lg shadow-red-500/20"
+                                  >
+                                    <span className="w-1 h-1 bg-white rounded-full animate-pulse" />
+                                    Cancelling
+                                  </motion.div>
+                                ) : !isCancelled && (
+                                  <Badge variant={lesson.type === 'Trial' ? 'gold' : lesson.type === 'Monthly' ? 'harbour' : 'outline'}>
+                                    {lesson.type}
+                                  </Badge>
+                                )}
                               </div>
-                              <div className={`flex items-center gap-2 text-[10px] ${isDark ? 'text-white/40' : 'text-zinc-500'}`}>
-                                <span className="font-medium">{lesson.instrument}</span>
-                                <span className={`w-1 h-1 rounded-full ${isDark ? 'bg-white/20' : 'bg-zinc-300'}`} />
-                                <span>{new Date(lesson.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                              <div className="flex items-center gap-2 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
+                                <span className={`font-bold ${isCancelled ? 'text-red-300' : 'text-zinc-500'}`}>{lesson.instrument}</span>
+                                <span className="w-1 h-1 rounded-full bg-zinc-300" />
+                                <span>{new Date(lesson.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
                               </div>
                             </div>
                           </div>
-                          <button 
-                            onClick={() => setActiveLessonAction(lesson)}
-                            className={`p-2 -mr-2 transition-colors ${isDark ? 'text-white/30' : 'text-zinc-400'} hover:text-harbour-500`}
-                          >
-                            <MoreVertical size={18} />
-                          </button>
+                          {!isCancelled && (
+                            <button 
+                              onClick={() => setActiveLessonAction(lesson)}
+                              className="p-2 -mr-2 transition-colors text-zinc-300 hover:text-harbour-500"
+                            >
+                              <MoreVertical size={20} />
+                            </button>
+                          )}
                         </div>
                         
-                        {/* Time & Schedule Info */}
-                        <div className="flex items-center gap-4 mb-4">
-                          <div className={`flex-1 border rounded-xl px-3 py-2 flex items-center gap-3 ${isDark ? 'bg-white/[0.03] border-white/5' : 'bg-zinc-50 border-zinc-100'}`}>
-                            <div className={isDark ? "text-white/40" : "text-zinc-400"}>
-                              <Clock size={14} />
-                            </div>
-                            <div className="flex flex-col">
-                              <span className={`text-[8px] font-bold uppercase tracking-widest leading-none mb-1 ${isDark ? 'text-white/30' : 'text-zinc-400'}`}>Scheduled Time</span>
-                              <span className={`text-xs font-serif-curvy italic ${isDark ? 'text-white/90' : 'text-zinc-900'}`}>{lesson.time}</span>
-                            </div>
+                        {isCancelled ? (
+                          <div className="bg-red-50/50 border border-red-100 rounded-2xl p-4 mb-2">
+                            <p className="text-[8px] font-bold uppercase tracking-widest text-red-400 mb-1">Reason for cancellation</p>
+                            <p className="text-xs text-red-900/70 italic">"{lesson.cancelReason || 'No reason provided'}"</p>
                           </div>
-                          <div className={`w-px h-8 ${isDark ? 'bg-white/10' : 'bg-zinc-200'}`} />
-                          <div className="flex flex-col items-end">
-                            <span className={`text-[8px] font-mono uppercase tracking-widest mb-1 ${isDark ? 'text-white/30' : 'text-zinc-400'}`}>Lesson</span>
-                            <span className={`text-xs font-bold ${isDark ? 'text-white/80' : 'text-zinc-900'}`}>#{lesson.lessonNumber}</span>
-                          </div>
-                        </div>
+                        ) : (
+                          <>
+                            {/* Time & Schedule Info */}
+                            <div className="grid grid-cols-2 gap-3 mb-6">
+                              <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-4 flex items-center gap-3">
+                                <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-harbour-500 shadow-sm">
+                                  <Clock size={18} />
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-400 mb-0.5">Time</span>
+                                  <span className="text-sm font-serif-curvy italic text-zinc-900">{lesson.time}</span>
+                                </div>
+                              </div>
+                              <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-4 flex items-center gap-3">
+                                <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-amber-500 shadow-sm">
+                                  <BookOpen size={18} />
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-400 mb-0.5">Lesson</span>
+                                  <span className="text-sm font-bold text-zinc-900">#{lesson.lessonNumber}</span>
+                                </div>
+                              </div>
+                            </div>
 
-                        <div className={`flex items-center justify-between pt-3 border-t ${isDark ? 'border-white/5' : 'border-zinc-100'}`}>
-                          <div className="flex items-center gap-2">
-                            <div className="w-1.5 h-1.5 bg-harbour-600 rounded-full shadow-[0_0_8px_rgba(131,72,54,0.4)]" />
-                            <span className="text-[9px] font-bold text-harbour-500/80 uppercase tracking-tight">Confirmed</span>
-                          </div>
-                          <button 
-                            onClick={() => {
-                              const student = realStudents.find(s => s.id === lesson.studentId) || MOCK_STUDENTS.find(s => s.id === lesson.studentId);
-                              if (student) setSelectedStudent(student);
-                              setSelectedLesson(lesson);
-                              setView('log-session');
-                            }}
-                            className="flex items-center gap-1.5 text-[10px] font-bold text-harbour-500 hover:text-harbour-400 transition-colors bg-walnut-50 px-3 py-1.5 rounded-full"
-                          >
-                            <Plus size={12} /> Log Session
-                          </button>
-                        </div>
+                            {/* Action Buttons */}
+                            <div className="grid grid-cols-3 gap-2 pt-5 border-t border-zinc-100">
+                              <button 
+                                onClick={() => {
+                                  setReschedulingLesson(lesson);
+                                  setShowRescheduleModal(true);
+                                }}
+                                className="flex flex-col items-center justify-center gap-1.5 py-3 rounded-2xl bg-zinc-50 border border-zinc-100 text-zinc-500 hover:bg-zinc-100 transition-all group/btn"
+                              >
+                                <Calendar size={16} className="group-hover/btn:text-harbour-500 transition-colors" />
+                                <span className="text-[8px] font-bold uppercase tracking-widest">Reschedule</span>
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  setLessonToCancel(lesson);
+                                  setShowCancelModal(true);
+                                }}
+                                className="flex flex-col items-center justify-center gap-1.5 py-3 rounded-2xl bg-zinc-50 border border-zinc-100 text-zinc-500 hover:bg-red-50 hover:border-red-100 hover:text-red-500 transition-all group/btn"
+                              >
+                                <XCircle size={16} />
+                                <span className="text-[8px] font-bold uppercase tracking-widest">Cancel</span>
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  const student = realStudents.find(s => s.id === lesson.studentId) || MOCK_STUDENTS.find(s => s.id === lesson.studentId);
+                                  if (student) setSelectedStudent(student);
+                                  setSelectedLesson(lesson);
+                                  setView('log-session');
+                                }}
+                                className="flex flex-col items-center justify-center gap-1.5 py-3 rounded-2xl bg-harbour-600 text-white hover:bg-harbour-700 transition-all shadow-lg shadow-harbour-600/20"
+                              >
+                                <Plus size={16} />
+                                <span className="text-[8px] font-bold uppercase tracking-widest">Log Session</span>
+                              </button>
+                            </div>
+                          </>
+                        )}
                       </div>
                     );
                   })
@@ -5903,7 +5955,7 @@ export default function App() {
       {/* Lessons List */}
       <div className="space-y-4">
         {lessons
-          .filter(l => l.status === 'confirmed')
+          .filter(l => l.status === 'confirmed' || l.status === 'cancelled')
           .filter(l => {
             if (scheduleFilter === 'all') return true;
             const lessonDate = new Date(l.date);
@@ -5920,61 +5972,87 @@ export default function App() {
             }
             return true;
           })
-          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+          .sort((a, b) => {
+            if (a.status === 'cancelled' && b.status !== 'cancelled') return 1;
+            if (a.status !== 'cancelled' && b.status === 'cancelled') return -1;
+            return new Date(a.date).getTime() - new Date(b.date).getTime();
+          })
           .map(lesson => {
             const student = realStudents.find(s => s.id === lesson.studentId) || MOCK_STUDENTS.find(s => s.id === lesson.studentId);
             const resolvedStudentName = student?.name || (lesson.studentName && lesson.studentName !== 'Student' ? lesson.studentName : null) || `Student (${lesson.studentId?.slice(0,6) || '?'})`;
+            const isCancelled = lesson.status === 'cancelled';
+
             return (
-              <div key={lesson.id} className="bg-white/5 border border-white/10 p-4 rounded-2xl relative group">
+              <div key={lesson.id} className={`p-4 rounded-2xl relative group border transition-all ${isCancelled ? 'bg-red-500/5 border-red-500/20 opacity-80' : 'bg-white/5 border-white/10'}`}>
+                {isCancelled && (
+                  <div className="absolute top-2 right-2">
+                    <div className="px-2 py-0.5 bg-red-500 text-white text-[7px] font-bold uppercase tracking-widest rounded-full flex items-center gap-1">
+                      <XCircle size={8} />
+                      Cancelled
+                    </div>
+                  </div>
+                )}
+                
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex gap-3 items-center">
                     <Avatar 
                       name={resolvedStudentName} 
                       photo={student?.photo} 
                       size="md" 
-                      className="rounded-full border border-white/10" 
+                      className={`rounded-full border shadow-sm ${isCancelled ? 'border-red-500/20 grayscale' : 'border-white/10'}`} 
                     />
                     <div className="min-w-0">
-                      <h3 className="text-sm font-bold truncate">{resolvedStudentName}</h3>
-                      <p className="text-white/40 text-[9px] truncate">{lesson.instrument}</p>
+                      <h3 className={`text-sm font-bold truncate ${isCancelled ? 'text-red-200/50' : 'text-white'}`}>{resolvedStudentName}</h3>
+                      <p className={`text-[9px] truncate ${isCancelled ? 'text-red-300/30' : 'text-white/40'}`}>{lesson.instrument}</p>
                     </div>
                   </div>
-                  <Badge variant={lesson.type === 'Trial' ? 'gold' : lesson.type === 'Monthly' ? 'harbour' : 'outline'}>
-                    {lesson.type}
-                  </Badge>
+                  {!isCancelled && (
+                    <Badge variant={lesson.type === 'Trial' ? 'gold' : lesson.type === 'Monthly' ? 'harbour' : 'outline'}>
+                      {lesson.type}
+                    </Badge>
+                  )}
                 </div>
 
-                <div className="bg-white/[0.03] border border-white/5 rounded-xl p-3 flex items-center justify-between">
+                <div className={`rounded-xl p-3 flex items-center justify-between border ${isCancelled ? 'bg-red-500/5 border-red-500/10' : 'bg-white/[0.03] border-white/5'}`}>
                   <div className="flex items-center gap-3">
-                    <div className="bg-white/10 w-8 h-8 rounded-lg flex items-center justify-center text-white/40">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isCancelled ? 'bg-red-500/10 text-red-400/50' : 'bg-white/10 text-white/40'}`}>
                       <Calendar size={14} />
                     </div>
                     <div>
-                      <p className="text-[10px] font-bold uppercase tracking-tighter text-white/60">
+                      <p className={`text-[10px] font-bold uppercase tracking-tighter ${isCancelled ? 'text-red-400/40' : 'text-white/60'}`}>
                         {new Date(lesson.date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
                       </p>
-                      <p className="text-xs font-serif-curvy italic text-white/90">{lesson.time}</p>
+                      <p className={`text-xs font-serif-curvy italic ${isCancelled ? 'text-red-200/30' : 'text-white/90'}`}>{lesson.time}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <button 
-                      onClick={() => {
-                        const student = MOCK_STUDENTS.find(s => s.id === lesson.studentId);
-                        if (student) {
-                          setSelectedChat(student);
-                          setView('messages');
-                        }
-                      }}
-                      className="w-8 h-8 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:bg-white/10 transition-colors mr-1"
-                    >
-                      <MessageSquare size={14} />
-                    </button>
+                    {!isCancelled && (
+                      <button 
+                        onClick={() => {
+                          const student = MOCK_STUDENTS.find(s => s.id === lesson.studentId);
+                          if (student) {
+                            setSelectedChat(student);
+                            setView('messages');
+                          }
+                        }}
+                        className="w-8 h-8 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:bg-white/10 transition-colors mr-1"
+                      >
+                        <MessageSquare size={14} />
+                      </button>
+                    )}
                     <div className="text-right">
-                      <p className="text-[8px] font-mono uppercase tracking-widest text-white/30">Lesson</p>
-                      <p className="text-xs font-bold text-white/80">#{lesson.lessonNumber}</p>
+                      <p className={`text-[8px] font-mono uppercase tracking-widest ${isCancelled ? 'text-red-400/20' : 'text-white/30'}`}>Lesson</p>
+                      <p className={`text-xs font-bold ${isCancelled ? 'text-red-200/40' : 'text-white/80'}`}>#{lesson.lessonNumber}</p>
                     </div>
                   </div>
                 </div>
+                
+                {isCancelled && lesson.cancelReason && (
+                  <div className="mt-3 px-3 py-2 bg-red-500/5 rounded-lg border border-red-500/10">
+                    <p className="text-[7px] font-bold uppercase tracking-widest text-red-400/40 mb-0.5">Reason</p>
+                    <p className="text-[10px] text-red-200/40 italic truncate">"{lesson.cancelReason}"</p>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -6044,72 +6122,52 @@ export default function App() {
                 key={student.id}
                 whileTap={{ scale: 0.98 }}
                 onClick={() => { setSelectedStudent(student); setView('student-detail'); }}
-                className="bg-white border border-zinc-100 p-5 rounded-[1.5rem] shadow-sm hover:shadow-md transition-all group"
+                className="bg-white border border-zinc-100 p-4 rounded-2xl shadow-sm hover:shadow-md transition-all group"
               >
-                <div className="flex items-center gap-4 mb-4">
-                  <div className="relative">
-                    <Avatar name={student.name} photo={student.photo} size="lg" className="rounded-2xl border-2 border-white shadow-sm" />
-                    <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-white rounded-full" />
+                <div className="flex items-center gap-3">
+                  <div className="relative flex-shrink-0">
+                    <Avatar name={student.name} photo={student.photo} size="md" className="rounded-xl border border-zinc-100" />
+                    <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 border-2 border-white rounded-full" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="text-base font-bold text-zinc-900 group-hover:text-harbour-600 transition-colors">{student.name}</h3>
-                        <p className="text-[11px] text-zinc-500 font-medium">{student.instrument}</p>
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-bold text-zinc-900 group-hover:text-harbour-600 transition-colors truncate">{student.name}</h3>
+                        <p className="text-[10px] text-zinc-400 font-medium truncate">{student.instrument} • {student.package}</p>
                       </div>
-                      <Badge className={`border ${stageColors[stage as keyof typeof stageColors]}`}>
-                        Stage {stage}
+                      <Badge className={`px-1.5 py-0.5 text-[8px] border ${stageColors[stage as keyof typeof stageColors]}`}>
+                        S{stage}
                       </Badge>
                     </div>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <div className="flex justify-between items-end mb-1">
-                    <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-400">Progress</span>
-                    <span className="text-[10px] font-bold text-zinc-900">{student.progress}%</span>
-                  </div>
-                  <div className="h-1.5 w-full bg-zinc-100 rounded-full overflow-hidden">
-                    <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: `${student.progress}%` }}
-                      className="h-full bg-gradient-to-r from-harbour-400 to-harbour-500 rounded-full"
-                    />
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-3 py-3 border-y border-zinc-50">
-                    <div>
-                      <p className="text-[8px] font-bold uppercase tracking-widest text-zinc-400 mb-1">Last Session</p>
-                      <p className="text-[10px] font-medium text-zinc-600">{student.lastSession || 'None'}</p>
+                    <div className="flex items-center justify-between mt-2">
+                      <div className="flex items-center gap-3">
+                        <div className="flex flex-col">
+                          <span className="text-[7px] uppercase tracking-widest text-zinc-300 font-bold">Progress</span>
+                          <span className="text-[9px] font-bold text-zinc-900">{student.progress}%</span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[7px] uppercase tracking-widest text-zinc-300 font-bold">Remaining</span>
+                          <span className="text-[9px] font-bold text-harbour-600">{student.lessonsRemaining}</span>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedChat({
+                            id: `new-${student.id}`,
+                            conversationId: null,
+                            name: student.name,
+                            photo: student.photo,
+                            role: 'Student',
+                            recipientId: student.id
+                          });
+                          setView('messages');
+                        }}
+                        className="w-8 h-8 rounded-full bg-zinc-50 text-zinc-400 hover:bg-zinc-900 hover:text-white flex items-center justify-center transition-all active:scale-90"
+                      >
+                        <MessageSquare size={14} />
+                      </button>
                     </div>
-                    <div>
-                      <p className="text-[8px] font-bold uppercase tracking-widest text-zinc-400 mb-1">Next Session</p>
-                      <p className="text-[10px] font-bold text-harbour-600">{student.nextSession || 'Not scheduled'}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-between items-center pt-2">
-                    <div className="flex flex-col">
-                      <span className="text-[10px] font-bold text-zinc-900">{student.package}</span>
-                      <span className="text-[9px] font-medium text-zinc-400">{student.lessonsRemaining} lessons left</span>
-                    </div>
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedChat({
-                          id: `new-${student.id}`,
-                          conversationId: null,
-                          name: student.name,
-                          photo: student.photo,
-                          role: 'Student',
-                          recipientId: student.id
-                        });
-                        setView('messages');
-                      }}
-                      className="w-10 h-10 rounded-full bg-zinc-900 text-white flex items-center justify-center shadow-lg shadow-black/10 transition-transform active:scale-90"
-                    >
-                      <MessageSquare size={16} />
-                    </button>
                   </div>
                 </div>
               </motion.div>
@@ -6607,6 +6665,13 @@ export default function App() {
         status: mentorProfile.gallery?.length > 0 ? 'success' : 'warning', 
         desc: 'Photos of your studio' 
       },
+      { 
+        id: 'credentials', 
+        label: 'Credentials & ID', 
+        icon: Award, 
+        status: (mentorProfile.certifications?.length > 0 && mentorProfile.idDocument) ? 'success' : 'warning', 
+        desc: 'Verify your identity and skills' 
+      },
     ];
 
     return (
@@ -6666,17 +6731,17 @@ export default function App() {
 
             <div className="flex gap-6 mt-8">
               <div className="text-center">
-                <p className="text-xl font-serif-sturdy">4.9</p>
+                <p className="text-xl font-serif-sturdy">{profileProgress === 100 ? '4.9' : '0.0'}</p>
                 <p className="text-[8px] uppercase tracking-widest text-white/30 font-bold">Rating</p>
               </div>
               <div className="w-px h-8 bg-white/10" />
               <div className="text-center">
-                <p className="text-xl font-serif-sturdy">12</p>
+                <p className="text-xl font-serif-sturdy">{profileProgress === 100 ? '12' : '0'}</p>
                 <p className="text-[8px] uppercase tracking-widest text-white/30 font-bold">Students</p>
               </div>
               <div className="w-px h-8 bg-white/10" />
               <div className="text-center">
-                <p className="text-xl font-serif-sturdy">156</p>
+                <p className="text-xl font-serif-sturdy">{profileProgress === 100 ? '156' : '0'}</p>
                 <p className="text-[8px] uppercase tracking-widest text-white/30 font-bold">Lessons</p>
               </div>
             </div>
@@ -6732,7 +6797,7 @@ export default function App() {
           <div className="grid grid-cols-1 gap-4">
             <button 
               onClick={() => setShowSetupDetails(true)}
-              className="group relative overflow-hidden p-6 bg-white rounded-[2.5rem] border border-zinc-100 shadow-sm hover:shadow-md transition-all"
+              className="group relative overflow-hidden p-6 bg-white rounded-[2.5rem] border border-zinc-200 shadow-md hover:shadow-lg transition-all"
             >
               <div className="flex items-center justify-between relative z-10">
                 <div className="flex items-center gap-5">
@@ -6741,10 +6806,10 @@ export default function App() {
                   </div>
                   <div className="text-left">
                     <p className="text-base font-bold text-zinc-900">Setup & Details</p>
-                    <p className="text-xs text-zinc-400">Configure your professional profile</p>
+                    <p className="text-xs text-zinc-500 font-medium">Configure your professional profile</p>
                   </div>
                 </div>
-                <div className="w-10 h-10 rounded-full bg-zinc-50 flex items-center justify-center text-zinc-300 group-hover:text-zinc-900 transition-colors">
+                <div className="w-10 h-10 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-400 group-hover:text-zinc-900 transition-colors">
                   <ChevronRight size={20} />
                 </div>
               </div>
@@ -6753,7 +6818,7 @@ export default function App() {
 
             <button 
               onClick={() => setShowCredentialsSheet(true)}
-              className="group relative overflow-hidden p-6 bg-white rounded-[2.5rem] border border-zinc-100 shadow-sm hover:shadow-md transition-all"
+              className="group relative overflow-hidden p-6 bg-white rounded-[2.5rem] border border-zinc-200 shadow-md hover:shadow-lg transition-all"
             >
               <div className="flex items-center justify-between relative z-10">
                 <div className="flex items-center gap-5">
@@ -6762,10 +6827,10 @@ export default function App() {
                   </div>
                   <div className="text-left">
                     <p className="text-base font-bold text-zinc-900">Credentials & ID</p>
-                    <p className="text-xs text-zinc-400">Manage your certifications</p>
+                    <p className="text-xs text-zinc-500 font-medium">Manage your certifications</p>
                   </div>
                 </div>
-                <div className="w-10 h-10 rounded-full bg-zinc-50 flex items-center justify-center text-zinc-300 group-hover:text-zinc-900 transition-colors">
+                <div className="w-10 h-10 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-400 group-hover:text-zinc-900 transition-colors">
                   <ChevronRight size={20} />
                 </div>
               </div>
@@ -6916,42 +6981,42 @@ export default function App() {
               transition={{ type: 'tween', ease: 'easeOut', duration: 0.3 }}
               className="fixed inset-0 z-[200] bg-zinc-50 flex flex-col"
             >
-              <header className="px-6 pt-16 pb-6 bg-white flex items-center justify-between shadow-sm">
-                <button onClick={() => setShowSetupDetails(false)} className="w-12 h-12 rounded-2xl bg-zinc-100 flex items-center justify-center transition-transform">
+              <header className="px-6 pt-16 pb-6 bg-zinc-900 flex items-center justify-between shadow-xl">
+                <button onClick={() => setShowSetupDetails(false)} className="w-12 h-12 rounded-2xl bg-white/10 text-white flex items-center justify-center transition-transform hover:bg-white/20">
                   <ChevronLeft size={24} />
                 </button>
-                <h2 className="text-xl font-serif-sturdy">Setup & Details</h2>
+                <h2 className="text-xl font-serif-sturdy text-white">Setup & Details</h2>
                 <div className="w-12" />
               </header>
 
-              <div className="flex-1 overflow-y-auto p-6">
-                <div className="grid grid-cols-1 gap-3">
+              <div className="flex-1 overflow-y-auto p-6 bg-zinc-50">
+                <div className="grid grid-cols-1 gap-4">
                   {setupItems.map((item) => (
                     <button 
                       key={item.id} 
                       onClick={() => setActiveSetupItem(item.id)}
-                      className="w-full p-5 bg-white rounded-[2.5rem] border border-zinc-100 flex items-center justify-between group transition-all shadow-sm"
+                      className="w-full p-6 bg-white rounded-[2.5rem] border border-zinc-200 flex items-center justify-between group transition-all shadow-md hover:shadow-lg hover:border-harbour-300"
                     >
                       <div className="flex items-center gap-5">
-                        <div className={`w-14 h-14 ${item.status === 'success' ? 'bg-walnut-50 text-walnut-600' : 'bg-amber-50 text-amber-600'} rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform duration-500`}>
-                          <item.icon size={24} />
+                        <div className={`w-14 h-14 ${item.status === 'success' ? 'bg-walnut-100 text-walnut-700' : 'bg-amber-100 text-amber-700'} rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform duration-500`}>
+                          <item.icon size={26} />
                         </div>
                         <div className="text-left">
-                          <p className="text-sm font-bold text-zinc-900">{item.label}</p>
-                          <p className="text-[10px] text-zinc-400">{item.desc}</p>
+                          <p className="text-base font-bold text-zinc-900">{item.label}</p>
+                          <p className="text-xs text-zinc-500 font-medium">{item.desc}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-4">
                         {item.status === 'success' ? (
-                          <div className="w-8 h-8 bg-walnut-100 text-walnut-600 rounded-full flex items-center justify-center">
-                            <CheckCircle2 size={16} />
+                          <div className="w-9 h-9 bg-walnut-500 text-white rounded-full flex items-center justify-center shadow-lg shadow-walnut-500/20">
+                            <CheckCircle2 size={18} />
                           </div>
                         ) : (
-                          <div className="w-8 h-8 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center animate-pulse">
-                            <AlertCircle size={16} />
+                          <div className="w-9 h-9 bg-amber-500 text-white rounded-full flex items-center justify-center animate-pulse shadow-lg shadow-amber-500/20">
+                            <AlertCircle size={18} />
                           </div>
                         )}
-                        <ChevronRight size={18} className="text-zinc-300 group-hover:text-zinc-900 transition-colors" />
+                        <ChevronRight size={20} className="text-zinc-400 group-hover:text-zinc-900 transition-colors" />
                       </div>
                     </button>
                   ))}
@@ -7098,49 +7163,185 @@ export default function App() {
                 <div className="w-12" />
               </header>
 
-              <div className="flex-1 overflow-y-auto p-8 space-y-8">
+              <div className="flex-1 overflow-y-auto p-8 space-y-10 pb-32">
+                {activeSetupItem === 'credentials' && (
+                  <div className="space-y-8">
+                    <div className="p-8 bg-white/10 border border-white/20 rounded-[2.5rem] space-y-6 shadow-2xl">
+                      <div className="flex items-center gap-5">
+                        <div className="w-14 h-14 bg-harbour-500 text-white rounded-2xl flex items-center justify-center shadow-lg shadow-harbour-500/20">
+                          <Shield size={28} />
+                        </div>
+                        <div>
+                          <p className="text-base font-bold text-white">Identity Verification</p>
+                          <p className="text-xs text-white/50">Upload your MyKad or Passport</p>
+                        </div>
+                      </div>
+                      
+                      {mentorProfile.idDocument ? (
+                        <div className="p-5 bg-emerald-500/20 border border-emerald-500/30 rounded-2xl flex items-center gap-4">
+                          <div className="w-8 h-8 bg-emerald-500 text-white rounded-full flex items-center justify-center">
+                            <CheckCircle2 size={18} />
+                          </div>
+                          <span className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Verified Successfully</span>
+                        </div>
+                      ) : (
+                        <button 
+                          onClick={() => {
+                            setIdUploadStatus('uploading');
+                            setTimeout(() => {
+                              setMentorProfile({ ...mentorProfile, idDocument: 'verified_id_placeholder' });
+                              saveMentorProfile({ idDocument: 'verified_id_placeholder' });
+                              setIdUploadStatus('success');
+                            }, 2000);
+                          }}
+                          disabled={idUploadStatus === 'uploading'}
+                          className="w-full py-5 bg-white/20 border border-white/20 rounded-2xl text-xs font-bold uppercase tracking-widest hover:bg-white/30 transition-all disabled:opacity-50 shadow-lg"
+                        >
+                          {idUploadStatus === 'uploading' ? 'Uploading...' : 'Upload MyKad / Passport'}
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="space-y-6">
+                      <div className="flex items-center justify-between px-4">
+                        <h3 className="text-xs font-bold uppercase tracking-widest text-white/40">Certifications</h3>
+                        <span className="px-3 py-1 bg-white/10 rounded-full text-[10px] font-bold text-white/60">{mentorProfile.certifications?.length || 0} Added</span>
+                      </div>
+                      
+                      <div className="space-y-4">
+                        {(mentorProfile.certifications || []).map((cert: any, i: number) => (
+                          <div key={i} className="p-6 bg-white/5 border border-white/10 rounded-[2rem] flex items-center justify-between group hover:bg-white/10 transition-all">
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-white/60">
+                                <Award size={20} />
+                              </div>
+                              <div>
+                                <p className="text-sm font-bold text-white">{cert.title}</p>
+                                <p className="text-[10px] text-white/40 font-medium uppercase tracking-wider">{cert.issuer} • {cert.year}</p>
+                              </div>
+                            </div>
+                            <button 
+                              onClick={() => {
+                                const newCerts = mentorProfile.certifications.filter((_: any, idx: number) => idx !== i);
+                                setMentorProfile({ ...mentorProfile, certifications: newCerts });
+                                saveMentorProfile({ certifications: newCerts });
+                              }}
+                              className="w-10 h-10 rounded-xl bg-red-500/10 text-red-400 flex items-center justify-center hover:bg-red-500 hover:text-white transition-all"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        ))}
+
+                        {isAddingCert ? (
+                          <div className="p-6 bg-white/5 border border-white/10 rounded-[2rem] space-y-4">
+                            <div className="space-y-3">
+                              <input 
+                                type="text" 
+                                placeholder="Certification Title"
+                                value={newCert.title}
+                                onChange={(e) => setNewCert({ ...newCert, title: e.target.value })}
+                                className="w-full p-4 bg-white/5 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-2 ring-harbour-500/20"
+                              />
+                              <input 
+                                type="text" 
+                                placeholder="Issuing Institution"
+                                value={newCert.issuer}
+                                onChange={(e) => setNewCert({ ...newCert, issuer: e.target.value })}
+                                className="w-full p-4 bg-white/5 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-2 ring-harbour-500/20"
+                              />
+                              <input 
+                                type="text" 
+                                placeholder="Year"
+                                value={newCert.year}
+                                onChange={(e) => setNewCert({ ...newCert, year: e.target.value })}
+                                className="w-full p-4 bg-white/5 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-2 ring-harbour-500/20"
+                              />
+                            </div>
+                            <div className="flex gap-2">
+                              <button 
+                                onClick={() => setIsAddingCert(false)}
+                                className="flex-1 py-3 text-[10px] font-bold uppercase tracking-widest text-white/40"
+                              >
+                                Cancel
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  if (!newCert.title) return;
+                                  const newCerts = [...(mentorProfile.certifications || []), newCert];
+                                  setMentorProfile({ ...mentorProfile, certifications: newCerts });
+                                  saveMentorProfile({ certifications: newCerts });
+                                  setNewCert({ title: '', issuer: '', year: '' });
+                                  setIsAddingCert(false);
+                                }}
+                                className="flex-[2] py-3 bg-harbour-500 text-white text-[10px] font-bold uppercase tracking-widest rounded-xl shadow-lg"
+                              >
+                                Save
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button 
+                            onClick={() => setIsAddingCert(true)}
+                            className="w-full py-4 border-2 border-dashed border-white/10 rounded-2xl flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-widest text-white/30 hover:bg-white/5 transition-colors"
+                          >
+                            <Plus size={16} /> Add Certification
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {activeSetupItem === 'video' && (
-                  <div className="space-y-6">
-                    <div className="space-y-3">
-                      <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Intro Video URL</label>
-                      <input 
-                        type="url" 
-                        value={setupForm.introVideoUrl || ''}
-                        onChange={(e) => setSetupForm({...setupForm, introVideoUrl: e.target.value})}
-                        onFocus={(e) => e.stopPropagation()}
-                        className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
-                        placeholder="https://youtube.com/watch?v=..."
-                      />
+                  <div className="space-y-8">
+                    <div className="space-y-4">
+                      <label className="text-xs font-bold uppercase tracking-widest text-white/40 ml-2">Intro Video URL</label>
+                      <div className="relative">
+                        <input 
+                          type="url" 
+                          value={setupForm.introVideoUrl || ''}
+                          onChange={(e) => setSetupForm({...setupForm, introVideoUrl: e.target.value})}
+                          onFocus={(e) => e.stopPropagation()}
+                          className="w-full p-6 bg-white/10 border border-white/20 rounded-[2rem] text-sm font-bold text-white focus:outline-none focus:ring-4 ring-harbour-500/20 focus:bg-white/20 transition-all placeholder:text-white/20"
+                          placeholder="https://youtube.com/watch?v=..."
+                        />
+                        <div className="absolute right-6 top-1/2 -translate-y-1/2 text-white/20">
+                          <Video size={20} />
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-white/30 ml-2">Paste a YouTube or Vimeo link to introduce yourself.</p>
                     </div>
                     {setupForm.introVideoUrl && (
-                      <div className="aspect-video w-full bg-black rounded-[2rem] overflow-hidden border border-white/10 flex items-center justify-center">
-                        <Video size={32} className="text-white/20" />
-                        <p className="absolute text-[10px] text-white/40 mt-12">Video Preview Placeholder</p>
+                      <div className="aspect-video w-full bg-black rounded-[2.5rem] overflow-hidden border border-white/10 flex flex-col items-center justify-center relative shadow-2xl">
+                        <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center text-white/40">
+                          <Play size={32} />
+                        </div>
+                        <p className="text-[10px] text-white/40 mt-4 font-bold uppercase tracking-widest">Video Preview Placeholder</p>
                       </div>
                     )}
                   </div>
                 )}
 
                 {activeSetupItem === 'bio' && (
-                  <div className="space-y-6">
-                    <div className="space-y-3">
-                      <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Professional Tagline</label>
+                  <div className="space-y-8">
+                    <div className="space-y-4">
+                      <label className="text-xs font-bold uppercase tracking-widest text-white/40 ml-2">Professional Tagline</label>
                       <input 
                         type="text" 
                         value={setupForm.tagline || ''}
                         onChange={(e) => setSetupForm({...setupForm, tagline: e.target.value})}
                         onFocus={(e) => e.stopPropagation()}
-                        className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
+                        className="w-full p-6 bg-white/10 border border-white/20 rounded-[2rem] text-sm font-bold text-white focus:outline-none focus:ring-4 ring-harbour-500/20 focus:bg-white/20 transition-all placeholder:text-white/20"
                         placeholder="e.g. Master of Traditional Sape Music"
                       />
                     </div>
-                    <div className="space-y-3">
-                      <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">About & Bio</label>
+                    <div className="space-y-4">
+                      <label className="text-xs font-bold uppercase tracking-widest text-white/40 ml-2">About & Bio</label>
                       <textarea 
                         value={setupForm.about || ''}
                         onChange={(e) => setSetupForm({...setupForm, about: e.target.value})}
                         onFocus={(e) => e.stopPropagation()}
-                        className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all min-h-[200px]"
+                        className="w-full p-6 bg-white/10 border border-white/20 rounded-[2rem] text-sm font-bold text-white focus:outline-none focus:ring-4 ring-harbour-500/20 focus:bg-white/20 transition-all placeholder:text-white/20 min-h-[200px]"
                         placeholder="Tell students about your journey, experience and passion..."
                       />
                     </div>
@@ -7148,31 +7349,31 @@ export default function App() {
                 )}
 
                 {activeSetupItem === 'skills' && (
-                  <div className="space-y-3">
-                    <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Specialisation (comma separated)</label>
+                  <div className="space-y-4">
+                    <label className="text-xs font-bold uppercase tracking-widest text-white/40 ml-2">Specialisation (comma separated)</label>
                     <input 
                       type="text" 
                       value={Array.isArray(setupForm.specialisation) ? setupForm.specialisation.join(', ') : setupForm.specialisation}
                       onChange={(e) => setSetupForm({...setupForm, specialisation: e.target.value})}
                       onFocus={(e) => e.stopPropagation()}
-                      className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
+                      className="w-full p-6 bg-white/10 border border-white/20 rounded-[2rem] text-sm font-bold text-white focus:outline-none focus:ring-4 ring-harbour-500/20 focus:bg-white/20 transition-all placeholder:text-white/20"
                       placeholder="e.g. Sape, Gambus, Traditional Theory"
                     />
                   </div>
                 )}
 
                 {activeSetupItem === 'pricing' && (
-                  <div className="space-y-6">
-                    <div className="space-y-3">
-                      <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Price Per Lesson</label>
+                  <div className="space-y-8">
+                    <div className="space-y-4">
+                      <label className="text-xs font-bold uppercase tracking-widest text-white/40 ml-2">Price Per Lesson (RM)</label>
                       <div className="relative">
-                        <div className="absolute left-5 top-1/2 -translate-y-1/2 text-sm font-bold text-white/40">RM</div>
+                        <div className="absolute left-6 top-1/2 -translate-y-1/2 text-sm font-bold text-white/40">RM</div>
                         <input 
                           type="number" 
                           value={setupForm.pricePerLesson || ''}
                           onChange={(e) => setSetupForm({...setupForm, pricePerLesson: e.target.value})}
                           onFocus={(e) => e.stopPropagation()}
-                          className="w-full p-5 pl-14 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-bold focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
+                          className="w-full p-6 pl-16 bg-white/10 border border-white/20 rounded-[2rem] text-sm font-bold text-white focus:outline-none focus:ring-4 ring-harbour-500/20 focus:bg-white/20 transition-all placeholder:text-white/20"
                           placeholder="0.00"
                         />
                       </div>
@@ -7211,12 +7412,12 @@ export default function App() {
                 )}
 
                 {activeSetupItem === 'availability' && (
-                  <div className="space-y-6">
-                    <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Weekly Availability</label>
+                  <div className="space-y-8">
+                    <label className="text-xs font-bold uppercase tracking-widest text-white/40 ml-2">Weekly Availability</label>
                     <div className="grid grid-cols-7 gap-2">
                       {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => (
-                        <div key={day} className="space-y-3">
-                          <p className="text-[10px] font-bold text-center text-white/40">{day}</p>
+                        <div key={day} className="space-y-4">
+                          <p className="text-[10px] font-bold text-center text-white/60 uppercase tracking-widest">{day}</p>
                           <div className="flex flex-col gap-2">
                             {['morning', 'afternoon', 'evening'].map((slot) => {
                               const isSelected = setupForm.availability?.[day]?.includes(slot);
@@ -7236,10 +7437,10 @@ export default function App() {
                                       }
                                     });
                                   }}
-                                  className={`h-12 rounded-xl flex items-center justify-center transition-all ${
+                                  className={`h-14 rounded-2xl flex items-center justify-center transition-all border ${
                                     isSelected 
-                                      ? 'bg-harbour-500 text-white shadow-lg shadow-harbour-500/20' 
-                                      : 'bg-white/5 text-white/40 hover:bg-white/10'
+                                      ? 'bg-harbour-500 border-harbour-400 text-white shadow-lg shadow-harbour-500/20' 
+                                      : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/10'
                                   }`}
                                 >
                                   <div className="rotate-90 text-[8px] font-bold uppercase tracking-tighter">
@@ -7252,8 +7453,8 @@ export default function App() {
                         </div>
                       ))}
                     </div>
-                    <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
-                      <p className="text-[10px] text-white/40 leading-relaxed">
+                    <div className="p-6 bg-white/5 rounded-[2rem] border border-white/10 shadow-inner">
+                      <p className="text-[10px] text-white/40 leading-relaxed font-medium text-center">
                         Morning: 9am-12pm • Afternoon: 2pm-6pm • Evening: 7pm-10pm
                       </p>
                     </div>
@@ -7261,39 +7462,39 @@ export default function App() {
                 )}
 
                 {activeSetupItem === 'path' && (
-                  <div className="space-y-3">
-                    <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Teaching Methodology</label>
+                  <div className="space-y-4">
+                    <label className="text-xs font-bold uppercase tracking-widest text-white/40 ml-2">Teaching Methodology</label>
                     <textarea 
                       value={setupForm.teachingMethodology || ''}
                       onChange={(e) => setSetupForm({...setupForm, teachingMethodology: e.target.value})}
                       onFocus={(e) => e.stopPropagation()}
-                      className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all min-h-[250px]"
+                      className="w-full p-6 bg-white/10 border border-white/20 rounded-[2rem] text-sm font-bold text-white focus:outline-none focus:ring-4 ring-harbour-500/20 focus:bg-white/20 transition-all placeholder:text-white/20 min-h-[300px]"
                       placeholder="Describe your unique approach to teaching traditional music..."
                     />
                   </div>
                 )}
 
                 {activeSetupItem === 'location' && (
-                  <div className="space-y-6">
-                    <div className="space-y-3">
-                      <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">City / Area</label>
+                  <div className="space-y-8">
+                    <div className="space-y-4">
+                      <label className="text-xs font-bold uppercase tracking-widest text-white/40 ml-2">City / Area</label>
                       <input 
                         type="text" 
                         value={setupForm.location || ''}
                         onChange={(e) => setSetupForm({...setupForm, location: e.target.value})}
                         onFocus={(e) => e.stopPropagation()}
-                        className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
+                        className="w-full p-6 bg-white/10 border border-white/20 rounded-[2rem] text-sm font-bold text-white focus:outline-none focus:ring-4 ring-harbour-500/20 focus:bg-white/20 transition-all placeholder:text-white/20"
                         placeholder="e.g. Kuala Lumpur"
                       />
                     </div>
-                    <div className="space-y-3">
-                      <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Full Address</label>
+                    <div className="space-y-4">
+                      <label className="text-xs font-bold uppercase tracking-widest text-white/40 ml-2">Full Address</label>
                       <input 
                         type="text" 
                         value={setupForm.address || ''}
                         onChange={(e) => setSetupForm({...setupForm, address: e.target.value})}
                         onFocus={(e) => e.stopPropagation()}
-                        className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
+                        className="w-full p-6 bg-white/10 border border-white/20 rounded-[2rem] text-sm font-bold text-white focus:outline-none focus:ring-4 ring-harbour-500/20 focus:bg-white/20 transition-all placeholder:text-white/20"
                         placeholder="Enter your studio or home address..."
                       />
                     </div>
@@ -7301,25 +7502,26 @@ export default function App() {
                 )}
 
                 {activeSetupItem === 'languages' && (
-                  <div className="space-y-3">
-                    <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Languages (comma separated)</label>
+                  <div className="space-y-4">
+                    <label className="text-xs font-bold uppercase tracking-widest text-white/40 ml-2">Languages (comma separated)</label>
                     <input 
                       type="text" 
                       value={Array.isArray(setupForm.languages) ? setupForm.languages.join(', ') : setupForm.languages}
                       onChange={(e) => setSetupForm({...setupForm, languages: e.target.value})}
                       onFocus={(e) => e.stopPropagation()}
-                      className="w-full p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-sm font-medium focus:outline-none focus:ring-4 ring-white/5 focus:bg-white/10 transition-all"
+                      className="w-full p-6 bg-white/10 border border-white/20 rounded-[2rem] text-sm font-bold text-white focus:outline-none focus:ring-4 ring-harbour-500/20 focus:bg-white/20 transition-all placeholder:text-white/20"
                       placeholder="e.g. English, Malay, Mandarin"
                     />
                   </div>
                 )}
 
                 {activeSetupItem === 'gallery' && (
-                  <div className="space-y-6">
-                    <label className="text-[10px] uppercase tracking-widest font-bold text-white/40 ml-1">Studio Gallery (4 Images)</label>
-                    <div className="grid grid-cols-1 gap-4">
+                  <div className="space-y-8">
+                    <label className="text-xs font-bold uppercase tracking-widest text-white/40 ml-2">Studio Gallery (4 Images)</label>
+                    <div className="grid grid-cols-1 gap-6">
                       {[0, 1, 2, 3].map((idx) => (
-                        <div key={idx} className="space-y-2">
+                        <div key={idx} className="space-y-3">
+                          <label className="text-[10px] font-bold text-white/30 ml-2 uppercase tracking-widest">Image {idx + 1}</label>
                           <input 
                             type="url" 
                             value={setupForm.gallery?.[idx] || ''}
@@ -7329,8 +7531,8 @@ export default function App() {
                               setSetupForm({...setupForm, gallery: newGallery});
                             }}
                             onFocus={(e) => e.stopPropagation()}
-                            className="w-full p-4 bg-white/5 border border-white/10 rounded-2xl text-xs font-medium focus:outline-none focus:bg-white/10 transition-all"
-                            placeholder={`Image URL ${idx + 1}...`}
+                            className="w-full p-5 bg-white/10 border border-white/20 rounded-2xl text-xs font-bold text-white focus:outline-none focus:bg-white/20 transition-all placeholder:text-white/20"
+                            placeholder={`Paste Image URL ${idx + 1}...`}
                           />
                         </div>
                       ))}
@@ -8501,6 +8703,7 @@ export default function App() {
                   <div className="space-y-3">
                     <button 
                       onClick={() => {
+                        setReschedulingLesson(activeLessonAction);
                         setActiveLessonAction(null);
                         setShowRescheduleModal(true);
                       }}
@@ -8513,27 +8716,17 @@ export default function App() {
                     </button>
                     
                     <button 
-                      onClick={async () => {
-                        if (window.confirm('Are you sure you want to cancel this lesson?')) {
-                          try {
-                            if (activeLessonAction.id.startsWith('l')) {
-                              setLessons(prev => prev.map(l => l.id === activeLessonAction.id ? { ...l, status: 'cancelled' } : l));
-                            } else {
-                              await updateDoc(doc(db, 'lessons', activeLessonAction.id), { status: 'cancelled' });
-                            }
-                            triggerNotification(activeLessonAction.studentId, 'lesson_cancelled', 'Lesson Cancelled', `Lesson with ${mentorProfile.name} has been cancelled.`);
-                            setActiveLessonAction(null);
-                          } catch (error) {
-                            console.error("Error cancelling lesson:", error);
-                          }
-                        }
+                      onClick={() => {
+                        setLessonToCancel(activeLessonAction);
+                        setShowCancelModal(true);
                       }}
-                      className="w-full flex items-center gap-4 p-4 bg-zinc-50 rounded-2xl hover:bg-zinc-100 transition-colors"
+                      disabled={cancellingIds.includes(activeLessonAction.id)}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-colors ${cancellingIds.includes(activeLessonAction.id) ? 'bg-red-50 text-red-500 cursor-not-allowed' : 'bg-zinc-50 hover:bg-zinc-100'}`}
                     >
-                      <div className="w-8 h-8 bg-white rounded-xl flex items-center justify-center shadow-sm">
-                        <XCircle size={16} className="text-red-400" />
+                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center shadow-sm ${cancellingIds.includes(activeLessonAction.id) ? 'bg-red-500 text-white animate-pulse' : 'bg-white text-red-400'}`}>
+                        {cancellingIds.includes(activeLessonAction.id) ? <Clock size={16} /> : <XCircle size={16} />}
                       </div>
-                      <span className="text-sm font-bold">Cancel Lesson</span>
+                      <span className="text-sm font-bold">{cancellingIds.includes(activeLessonAction.id) ? 'Cancelling Lesson...' : 'Cancel Lesson'}</span>
                     </button>
 
                     <button 
@@ -8732,39 +8925,148 @@ export default function App() {
         title="Credentials & ID"
       >
         <div className="px-6 pb-12 space-y-8">
-          <div className="p-6 bg-amber-50 rounded-[2rem] border border-amber-100 flex items-center gap-4">
-            <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-amber-600 shadow-sm">
-              <CheckCircle2 size={24} />
-            </div>
-            <div>
-              <p className="text-sm font-bold text-zinc-900">Identity Verified</p>
-              <p className="text-[10px] text-zinc-500">Verified via MyKad on 12 Jan 2026</p>
-            </div>
-          </div>
-
+          {/* ID Verification Section */}
           <div className="space-y-4">
-            <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-2">Certifications</h3>
-            <div className="space-y-3">
-              {[
-                { title: 'Master of Traditional Arts', issuer: 'ASWARA', year: '2022' },
-                { title: 'Sape Performance Grade 8', issuer: 'Sarawak Arts Council', year: '2020' }
-              ].map((cert, i) => (
-                <div key={i} className="p-5 bg-white border border-zinc-100 rounded-2xl flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-bold text-zinc-900">{cert.title}</p>
-                    <p className="text-[10px] text-zinc-400">{cert.issuer} • {cert.year}</p>
-                  </div>
-                  <button className="text-harbour-600">
-                    <Download size={16} />
-                  </button>
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-2">Identity Verification</h3>
+            {mentorProfile.idDocument ? (
+              <div className="p-6 bg-emerald-50 rounded-[2rem] border border-emerald-100 flex items-center gap-4">
+                <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-emerald-600 shadow-sm">
+                  <CheckCircle2 size={24} />
                 </div>
-              ))}
-            </div>
+                <div>
+                  <p className="text-sm font-bold text-zinc-900">Identity Verified</p>
+                  <p className="text-[10px] text-zinc-500">Verified via MyKad / Passport</p>
+                </div>
+              </div>
+            ) : (
+              <div className="p-6 bg-amber-50 rounded-[2rem] border border-amber-100">
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-amber-600 shadow-sm">
+                    <ShieldAlert size={24} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-zinc-900">Verification Required</p>
+                    <p className="text-[10px] text-zinc-500">Upload your ID to build trust with students</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => {
+                    setIdUploadStatus('uploading');
+                    setTimeout(() => {
+                      setMentorProfile({ ...mentorProfile, idDocument: 'verified_id_placeholder' });
+                      saveMentorProfile({ idDocument: 'verified_id_placeholder' });
+                      setIdUploadStatus('success');
+                    }, 2000);
+                  }}
+                  disabled={idUploadStatus === 'uploading'}
+                  className="w-full py-3 bg-white border border-amber-200 text-amber-700 text-[10px] font-bold uppercase tracking-widest rounded-xl shadow-sm hover:bg-amber-100 transition-colors disabled:opacity-50"
+                >
+                  {idUploadStatus === 'uploading' ? 'Uploading...' : 'Upload MyKad / Passport'}
+                </button>
+              </div>
+            )}
           </div>
 
-          <button className="w-full py-4 border-2 border-dashed border-zinc-100 rounded-2xl flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-widest text-zinc-400 hover:bg-zinc-50 transition-colors">
-            <Plus size={16} /> Add New Certification
-          </button>
+          {/* Certifications Section */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between px-2">
+              <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Certifications</h3>
+              <span className="text-[10px] font-bold text-zinc-900">{mentorProfile.certifications?.length || 0} Total</span>
+            </div>
+            
+            <div className="space-y-3">
+              {(mentorProfile.certifications || []).length > 0 ? (
+                mentorProfile.certifications.map((cert: any, i: number) => (
+                  <div key={i} className="p-5 bg-white border border-zinc-100 rounded-2xl flex items-center justify-between group">
+                    <div>
+                      <p className="text-xs font-bold text-zinc-900">{cert.title}</p>
+                      <p className="text-[10px] text-zinc-400">{cert.issuer} • {cert.year}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button className="p-2 text-zinc-300 hover:text-harbour-600 transition-colors">
+                        <Download size={16} />
+                      </button>
+                      <button 
+                        onClick={() => {
+                          const newCerts = mentorProfile.certifications.filter((_: any, idx: number) => idx !== i);
+                          setMentorProfile({ ...mentorProfile, certifications: newCerts });
+                          saveMentorProfile({ certifications: newCerts });
+                        }}
+                        className="p-2 text-zinc-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="py-8 text-center border-2 border-dashed border-zinc-100 rounded-[2rem]">
+                  <Award size={32} className="text-zinc-200 mx-auto mb-3" />
+                  <p className="text-xs text-zinc-400">No certifications added yet</p>
+                </div>
+              )}
+
+              {isAddingCert ? (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="p-6 bg-zinc-50 border border-zinc-200 rounded-[2rem] space-y-4"
+                >
+                  <div className="space-y-3">
+                    <input 
+                      type="text" 
+                      placeholder="Certification Title"
+                      value={newCert.title}
+                      onChange={(e) => setNewCert({ ...newCert, title: e.target.value })}
+                      className="w-full p-4 bg-white border border-zinc-100 rounded-xl text-xs focus:outline-none focus:ring-2 ring-harbour-500/20"
+                    />
+                    <input 
+                      type="text" 
+                      placeholder="Issuing Institution"
+                      value={newCert.issuer}
+                      onChange={(e) => setNewCert({ ...newCert, issuer: e.target.value })}
+                      className="w-full p-4 bg-white border border-zinc-100 rounded-xl text-xs focus:outline-none focus:ring-2 ring-harbour-500/20"
+                    />
+                    <input 
+                      type="text" 
+                      placeholder="Year"
+                      value={newCert.year}
+                      onChange={(e) => setNewCert({ ...newCert, year: e.target.value })}
+                      className="w-full p-4 bg-white border border-zinc-100 rounded-xl text-xs focus:outline-none focus:ring-2 ring-harbour-500/20"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => setIsAddingCert(false)}
+                      className="flex-1 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      onClick={() => {
+                        if (!newCert.title) return;
+                        const newCerts = [...(mentorProfile.certifications || []), newCert];
+                        setMentorProfile({ ...mentorProfile, certifications: newCerts });
+                        saveMentorProfile({ certifications: newCerts });
+                        setNewCert({ title: '', issuer: '', year: '' });
+                        setIsAddingCert(false);
+                      }}
+                      className="flex-[2] py-3 bg-zinc-900 text-white text-[10px] font-bold uppercase tracking-widest rounded-xl shadow-lg"
+                    >
+                      Save Certification
+                    </button>
+                  </div>
+                </motion.div>
+              ) : (
+                <button 
+                  onClick={() => setIsAddingCert(true)}
+                  className="w-full py-4 border-2 border-dashed border-zinc-100 rounded-2xl flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-widest text-zinc-400 hover:bg-zinc-50 transition-colors"
+                >
+                  <Plus size={16} /> Add New Certification
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </BottomSheet>
 
@@ -8936,12 +9238,11 @@ export default function App() {
                     </button>
                     <button 
                       onClick={() => {
-                        if (window.confirm('Cancel this session?')) {
-                          handleCancelLesson(selectedLessonDetails);
-                          setSelectedLessonDetails(null);
-                        }
+                        setLessonToCancel(selectedLessonDetails);
+                        setShowCancelModal(true);
+                        setSelectedLessonDetails(null);
                       }}
-                      className="w-12 h-12 flex items-center justify-center border border-red-500/20 text-red-500 rounded-full"
+                      className="w-12 h-12 flex items-center justify-center border border-red-500/20 text-red-500 rounded-full hover:bg-red-500/5 transition-colors"
                     >
                       <X size={18} />
                     </button>
@@ -9375,6 +9676,123 @@ export default function App() {
                 isStudent={isStudent} 
                 isNewUser={isNewUser} 
               />
+
+              {/* Reschedule Modal - Global */}
+              <BottomSheet isOpen={showRescheduleModal} onClose={() => {
+                setShowRescheduleModal(false);
+                setReschedulingLesson(null);
+                setSelectedRescheduleDate(null);
+                setSelectedRescheduleTime(null);
+              }}>
+                <div className="px-6 pb-10 text-zinc-900">
+                  <h3 className="text-2xl font-serif mb-2">Reschedule Session</h3>
+                  <p className="text-sm text-zinc-500 mb-8">Pick a new date and time for your session.</p>
+                  
+                  <div className="space-y-6">
+                    <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
+                      {dates.map((date, i) => {
+                        const dateStr = date.toISOString().split('T')[0];
+                        const isSelected = selectedRescheduleDate === dateStr;
+                        return (
+                          <button 
+                            key={i}
+                            onClick={() => setSelectedRescheduleDate(dateStr)}
+                            className={`flex-shrink-0 w-12 py-4 rounded-2xl flex flex-col items-center gap-1 transition-all ${isSelected ? 'bg-zinc-900 text-white shadow-lg' : 'bg-zinc-50 text-zinc-400'}`}
+                          >
+                            <span className="text-[8px] uppercase font-bold">{days[date.getDay()]}</span>
+                            <span className="text-sm font-bold">{date.getDate()}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    
+                    <div className="grid grid-cols-3 gap-2">
+                      {['10:00', '11:00', '14:00', '15:00', '16:00', '17:00'].map(time => {
+                        const isSelected = selectedRescheduleTime === time;
+                        return (
+                          <button 
+                            key={time} 
+                            onClick={() => setSelectedRescheduleTime(time)}
+                            className={`py-3.5 rounded-xl border text-[11px] font-bold transition-all ${isSelected ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white border-zinc-100 text-zinc-400'}`}
+                          >
+                            {time}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <button 
+                      onClick={() => {
+                        if (reschedulingLesson && selectedRescheduleDate && selectedRescheduleTime) {
+                          handleRescheduleRequest(reschedulingLesson, selectedRescheduleDate, selectedRescheduleTime);
+                        }
+                      }}
+                      disabled={!selectedRescheduleDate || !selectedRescheduleTime}
+                      className={`w-full py-5 text-white font-bold rounded-full mt-6 shadow-lg active:scale-95 transition-transform ${(!selectedRescheduleDate || !selectedRescheduleTime) ? 'bg-zinc-300 cursor-not-allowed' : 'bg-teal-500 shadow-teal-500/20'}`}
+                    >
+                      Confirm New Time
+                    </button>
+                  </div>
+                </div>
+              </BottomSheet>
+
+              {/* Cancellation Reason Modal */}
+              <BottomSheet isOpen={showCancelModal} onClose={() => {
+                setShowCancelModal(false);
+                setLessonToCancel(null);
+                setCancelReason('');
+              }}>
+                <div className="px-6 pb-10 text-zinc-900">
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="w-12 h-12 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center">
+                      <AlertCircle size={24} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-serif-sturdy">Cancel Session?</h3>
+                      <p className="text-xs text-zinc-500">This action cannot be undone.</p>
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-6">
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Reason for cancellation</label>
+                      <textarea 
+                        value={cancelReason}
+                        onChange={(e) => setCancelReason(e.target.value)}
+                        placeholder="e.g., Unforeseen circumstances, change of plans..."
+                        className="w-full bg-zinc-50 border border-zinc-100 rounded-2xl p-4 text-sm text-zinc-900 focus:outline-none focus:border-harbour-500 min-h-[120px]"
+                      />
+                    </div>
+
+                    <div className="flex gap-3">
+                      <button 
+                        onClick={() => {
+                          setShowCancelModal(false);
+                          setLessonToCancel(null);
+                          setCancelReason('');
+                        }}
+                        className="flex-1 py-4 bg-zinc-100 text-zinc-900 font-bold rounded-full text-xs"
+                      >
+                        Go Back
+                      </button>
+                      <button 
+                        onClick={() => {
+                          if (lessonToCancel && cancelReason.trim()) {
+                            handleCancelLesson(lessonToCancel, cancelReason);
+                            setShowCancelModal(false);
+                            setLessonToCancel(null);
+                            setCancelReason('');
+                          }
+                        }}
+                        disabled={!cancelReason.trim()}
+                        className={`flex-[2] py-4 text-white font-bold rounded-full text-xs shadow-lg active:scale-95 transition-transform ${!cancelReason.trim() ? 'bg-zinc-300 cursor-not-allowed' : 'bg-red-500 shadow-red-500/20'}`}
+                      >
+                        Confirm Cancellation
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </BottomSheet>
             </>
           );
         })()

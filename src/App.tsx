@@ -96,7 +96,9 @@ import {
   setDoc,
   getDocFromServer,
   getDocs,
-  serverTimestamp
+  serverTimestamp,
+  arrayUnion,
+  arrayRemove
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
 
@@ -2010,9 +2012,29 @@ export default function App() {
     return () => unsub();
   }, [currentUser, isStudent, userProfile]);
 
+  // Mentor Profile Listener
+  useEffect(() => {
+    if (!currentUser || isStudent || !userProfile) return;
+    const unsub = onSnapshot(
+      doc(db, 'mentors', currentUser.uid),
+      (snap) => {
+        if (snap.exists()) {
+          setMentorProfile(prev => ({
+            ...prev,
+            ...snap.data()
+          }));
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, `mentors/${currentUser.uid}`);
+      }
+    );
+    return () => unsub();
+  }, [currentUser, isStudent, userProfile]);
+
   // Conversations Listener
   useEffect(() => {
-    if (!currentUser || !isStudent || !userProfile) return;
+    if (!currentUser || !userProfile) return;
     
     const q = query(
       collection(db, 'conversations'),
@@ -2071,6 +2093,18 @@ export default function App() {
     
     return () => unsub();
   }, [selectedChat?.conversationId]);
+
+  // Mark messages as read
+  useEffect(() => {
+    if (!currentUser || !selectedChat?.conversationId) return;
+    
+    const conversation = conversations.find(c => c.id === selectedChat.conversationId);
+    if (conversation?.unreadBy?.includes(currentUser.uid)) {
+      updateDoc(doc(db, 'conversations', selectedChat.conversationId), {
+        unreadBy: arrayRemove(currentUser.uid)
+      }).catch(err => console.error("Error marking as read:", err));
+    }
+  }, [selectedChat?.conversationId, conversations, currentUser]);
 
   const saveStudentProfile = async (updates: any) => {
     if (!currentUser) return;
@@ -2220,9 +2254,13 @@ export default function App() {
 
       await addDoc(collection(db, 'conversations', conversationId, 'messages'), messageData);
 
+      const otherParticipantId = selectedChat.recipientId || 
+        conversations.find(c => c.id === conversationId)?.participants.find((p: string) => p !== currentUser.uid);
+
       await updateDoc(doc(db, 'conversations', conversationId), {
         lastMessage: trimmedText,
-        lastMessageAt: serverTimestamp()
+        lastMessageAt: serverTimestamp(),
+        unreadBy: arrayUnion(otherParticipantId)
       });
     } catch (error) {
       console.error("Error sending message:", error);
@@ -2468,7 +2506,7 @@ export default function App() {
         studentName: userProfile?.name || currentUser.displayName || currentUser.email?.split('@')[0] || 'Student',
         mentorId: selectedMentor.id,
         mentorName: selectedMentor.name,
-        instrument: selectedMentor.specialisation[0] || '',
+        instrument: selectedInstrument?.name || selectedMentor.specialisation[0] || '',
         date: bookingDate || '',
         time: bookingTime || '',
         type: capitalizedType,
@@ -2484,7 +2522,9 @@ export default function App() {
       });
 
       setBookingSuccess({ type, mentor: selectedMentor.name });
-      if (type === 'trial') setIsTrialCompleted(true);
+      if (type === 'trial') {
+        // No longer need setIsTrialCompleted(true) as we use dynamic check
+      }
       
     } catch (error) {
       console.error('Booking failed:', error);
@@ -2773,7 +2813,6 @@ export default function App() {
   const [recurringDay, setRecurringDay] = useState<string | null>(null);
   const [recurringTime, setRecurringTime] = useState<string | null>(null);
   const [isTrialConfirmed, setIsTrialConfirmed] = useState(false);
-  const [isTrialCompleted, setIsTrialCompleted] = useState(false);
 
   // Calendar & Time Data for Booking
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -3433,6 +3472,13 @@ export default function App() {
 
     if (!selectedMentor) return null;
 
+    const hasBookedTrialForInstrument = studentLessons.some(l => 
+      l.type?.toLowerCase() === 'trial' && 
+      (l.instrument?.toLowerCase().includes(selectedInstrument?.name?.toLowerCase() || '') ||
+       selectedMentor.specialisation.some(s => s.toLowerCase().includes(l.instrument?.toLowerCase() || ''))) &&
+      l.status !== 'cancelled'
+    );
+
     const mentorInstrument = MOCK_INSTRUMENTS.find(i => 
       selectedMentor.specialisation.some(s => 
         s.toLowerCase().includes(i.name.toLowerCase())
@@ -3441,8 +3487,9 @@ export default function App() {
     const coverImage = mentorInstrument?.photo || selectedMentor.photo;
 
     return (
-      <div className={`${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'} min-h-full`}>
-        <div className="relative h-64 overflow-hidden">
+      <div className={`h-full flex flex-col ${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'} relative`}>
+        <div className="flex-1 overflow-y-auto scrollbar-hide">
+          <div className="relative h-64 overflow-hidden">
           {selectedMentor.introVideoUrl ? (
             <video
               src={selectedMentor.introVideoUrl}
@@ -3688,37 +3735,50 @@ export default function App() {
             ))}
           </div>
         </div>
+      </div>
 
         {/* Sticky Bottom */}
-        <div className={`absolute bottom-0 left-0 right-0 p-6 pb-10 backdrop-blur-2xl border-t flex items-center gap-4 z-[110] ${dark ? 'bg-black/95 border-white/10' : 'bg-white/95 border-black/5'}`}>
-          {isStudent && (
-            <button 
-              onClick={() => {
-                handleStartConversation(selectedMentor.id, selectedMentor.name, selectedMentor.photo);
-              }}
-              className={`w-14 h-14 rounded-2xl flex items-center justify-center border transition-all ${dark ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-white border-zinc-200 text-zinc-900 shadow-sm hover:bg-zinc-50'}`}
-            >
-              <MessageSquare size={20} />
-            </button>
-          )}
+        <div className={`p-6 pb-10 backdrop-blur-2xl border-t flex flex-col gap-3 z-[110] ${dark ? 'bg-black/95 border-white/10' : 'bg-white/95 border-black/5'}`}>
+          <div className="flex items-center gap-3 w-full">
+            {isStudent && (
+              <button 
+                onClick={() => {
+                  handleStartConversation(selectedMentor.id, selectedMentor.name, selectedMentor.photo);
+                }}
+                className={`w-14 h-14 rounded-2xl flex items-center justify-center border transition-all ${dark ? 'bg-white/5 border-white/10 text-white hover:bg-white/10' : 'bg-white border-zinc-200 text-zinc-900 shadow-sm hover:bg-zinc-50'}`}
+              >
+                <MessageSquare size={20} />
+              </button>
+            )}
 
-          <button 
-            onClick={() => {
-              if (isTrialCompleted) {
-                setBookingType('package');
-                setBookingStep(1);
-                setShowBookingSheet(true);
-              } else {
-                setBookingType('trial');
-                setBookingStep(1);
-                setShowBookingSheet(true);
-              }
-            }}
-            className={`flex-1 font-bold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-[0_20px_50px_rgba(0,0,0,0.3)] transition-all active:scale-95 ${dark ? 'bg-white text-black hover:bg-zinc-100' : 'bg-zinc-900 text-white hover:bg-zinc-800'}`}
-          >
-            <Music2 size={18} />
-            {isTrialCompleted ? 'Select a Package' : 'Book Free Trial'}
-          </button>
+            {isStudent && (
+              <div className="flex-1 flex gap-2">
+                {!hasBookedTrialForInstrument && (
+                  <button 
+                    onClick={() => {
+                      setBookingType('trial');
+                      setBookingStep(1);
+                      setShowBookingSheet(true);
+                    }}
+                    className={`flex-1 font-bold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg transition-all active:scale-95 ${dark ? 'bg-white/10 text-white border border-white/10 hover:bg-white/20' : 'bg-zinc-100 text-zinc-900 border border-zinc-200 hover:bg-zinc-200'}`}
+                  >
+                    Free Trial
+                  </button>
+                )}
+                <button 
+                  onClick={() => {
+                    setBookingType('package');
+                    setBookingStep(1);
+                    setShowBookingSheet(true);
+                  }}
+                  className={`flex-1 font-bold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-[0_20px_50px_rgba(0,0,0,0.3)] transition-all active:scale-95 ${dark ? 'bg-white text-black hover:bg-zinc-100' : 'bg-zinc-900 text-white hover:bg-zinc-800'}`}
+                >
+                  <Music2 size={18} />
+                  {hasBookedTrialForInstrument ? 'Select Package' : 'Buy Package'}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -4494,6 +4554,9 @@ export default function App() {
                       <div className="flex items-center gap-4">
                         <div className="relative">
                           <img src={details.photo || null} className="w-12 h-12 rounded-2xl object-cover" referrerPolicy="no-referrer" />
+                          {conv.unreadBy?.includes(currentUser?.uid) && (
+                            <div className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-harbour-500 rounded-full border-2 border-atmospheric-dark" />
+                          )}
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex justify-between items-start mb-1">
@@ -6160,15 +6223,33 @@ export default function App() {
                         S{stage}
                       </Badge>
                     </div>
-                    <div className="flex items-center justify-between mt-2">
-                      <div className="flex items-center gap-3">
-                        <div className="flex flex-col">
-                          <span className="text-[7px] uppercase tracking-widest text-zinc-300 font-bold">Progress</span>
-                          <span className="text-[9px] font-bold text-zinc-900">{student.progress}%</span>
-                        </div>
+                    <div className="flex flex-col mt-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[7px] uppercase tracking-widest text-zinc-300 font-bold">Overall Progress</span>
+                        <span className="text-[9px] font-bold text-zinc-900">{student.progress}%</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+                        <motion.div 
+                          initial={{ width: 0 }}
+                          animate={{ width: `${student.progress}%` }}
+                          className={`h-full rounded-full ${
+                            stage === 1 ? 'bg-amber-400' :
+                            stage === 2 ? 'bg-harbour-500' :
+                            stage === 3 ? 'bg-blue-500' :
+                            'bg-purple-500'
+                          }`}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between mt-3">
+                      <div className="flex items-center gap-4">
                         <div className="flex flex-col">
                           <span className="text-[7px] uppercase tracking-widest text-zinc-300 font-bold">Remaining</span>
-                          <span className="text-[9px] font-bold text-harbour-600">{student.lessonsRemaining}</span>
+                          <span className="text-[9px] font-bold text-harbour-600">{student.lessonsRemaining} Lessons</span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[7px] uppercase tracking-widest text-zinc-300 font-bold">Next Session</span>
+                          <span className="text-[9px] font-bold text-zinc-600">{student.nextSession || 'Not scheduled'}</span>
                         </div>
                       </div>
                       <button 
@@ -6205,12 +6286,20 @@ export default function App() {
       return <ChatConversation recipient={selectedChat} onBack={() => setSelectedChat(null)} dark={true} />;
     }
 
-    const filteredStudents = realStudents.filter(s => s.name.toLowerCase().includes(studentSearch.toLowerCase()));
+    const activeStudentIds = new Set([
+      ...lessons.map(l => l.studentId),
+      ...conversations.map(c => c.participants.find((p: string) => p !== currentUser?.uid))
+    ]);
+
+    const filteredStudents = (realStudents.length > 0 ? realStudents : MOCK_STUDENTS)
+      .filter(s => activeStudentIds.has(s.id))
+      .filter(s => s.name.toLowerCase().includes(studentSearch.toLowerCase()));
 
     return (
       <div className="h-full flex flex-col pt-16 bg-atmospheric-dark text-white">
         <div className="px-5 mb-6">
-          <h1 className="text-3xl font-serif-sturdy mb-6 text-white">Student Messages</h1>
+          <h1 className="text-3xl font-serif-sturdy mb-2 text-white">Messages</h1>
+          <p className="text-[10px] text-white/30 uppercase tracking-[0.2em] mb-6">Active Conversations</p>
           <div className="relative">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30" size={14} />
             <input 
@@ -6224,43 +6313,66 @@ export default function App() {
 
         <div className="flex-1 overflow-y-auto px-5 space-y-3 pb-32">
           {filteredStudents.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 gap-3 relative overflow-hidden rounded-3xl">
-              <div className="absolute inset-0 bg-gradient-to-b from-transparent to-white/2 rounded-3xl" />
-              <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
+            <div className="flex flex-col items-center justify-center h-64 gap-4 relative overflow-hidden rounded-[2.5rem] border border-white/5 bg-white/[0.02]">
+              <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center">
                 <MessageSquare size={24} className="text-white/20" />
               </div>
-              <div className="text-center">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-white/30">No conversations yet</p>
-                <p className="text-[9px] text-white/15 mt-1">Messages from your students will appear here</p>
+              <div className="text-center px-8">
+                <p className="text-xs font-bold text-white/40">No active chats</p>
+                <p className="text-[10px] text-white/20 mt-1 leading-relaxed">Students who book a session with you will appear here for messaging.</p>
               </div>
             </div>
           ) : (
-            filteredStudents.map((student, i) => (
-              <motion.div 
-                key={student.id} 
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setSelectedChat(student)}
-                className="p-4 rounded-3xl border transition-all cursor-pointer bg-white/5 border-white/10 hover:bg-white/10"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="relative">
-                    <Avatar name={student.name} photo={student.photo} size="md" className="rounded-2xl" />
-                    {i === 0 && <div className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-harbour-500 rounded-full border-2 border-black" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-start mb-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-bold truncate">{student.name}</h3>
-                        <span className="px-1.5 py-0.5 text-[7px] font-bold rounded uppercase tracking-widest bg-white/10 text-white/40">Student</span>
-                      </div>
-                      <span className="text-[8px] font-mono text-white/30">12:45 PM</span>
+            filteredStudents.map((student) => {
+              const conversation = conversations.find(c => c.participants.includes(student.id));
+              const lastMessage = conversation?.lastMessage || "No messages yet";
+              const lastTime = conversation?.lastMessageAt?.toDate ? 
+                conversation.lastMessageAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 
+                "";
+
+              return (
+                <motion.div 
+                  key={student.id} 
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => {
+                    if (conversation) {
+                      setSelectedChat({
+                        id: conversation.id,
+                        conversationId: conversation.id,
+                        name: student.name,
+                        photo: student.photo,
+                        role: 'Student'
+                      });
+                    } else {
+                      setSelectedChat({
+                        id: `new-${student.id}`,
+                        conversationId: null,
+                        name: student.name,
+                        photo: student.photo,
+                        role: 'Student',
+                        recipientId: student.id
+                      });
+                    }
+                  }}
+                  className="p-4 rounded-[2rem] border transition-all cursor-pointer bg-white/5 border-white/10 hover:bg-white/10 group"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="relative">
+                      <Avatar name={student.name} photo={student.photo} size="md" className="rounded-2xl" />
+                      {conversation?.unreadBy?.includes(currentUser?.uid) && <div className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-harbour-500 rounded-full border-2 border-black" />}
                     </div>
-                    <p className="text-[9px] text-harbour-400 uppercase tracking-widest mb-1">{student.instrument}</p>
-                    <p className="text-[11px] truncate text-white/40">Thanks for the feedback! Looking forward to our next session.</p>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-start mb-1">
+                        <h3 className="text-sm font-bold truncate group-hover:text-harbour-400 transition-colors">{student.name}</h3>
+                        <span className="text-[8px] font-mono text-white/30">{lastTime}</span>
+                      </div>
+                      <p className="text-[9px] text-harbour-400 uppercase tracking-widest mb-1">{student.instrument}</p>
+                      <p className="text-[11px] truncate text-white/40">{lastMessage}</p>
+                    </div>
                   </div>
-                </div>
-              </motion.div>
-            )))}
+                </motion.div>
+              );
+            }))}
         </div>
       </div>
     );
@@ -9559,7 +9671,7 @@ export default function App() {
                             <div className="flex justify-between items-center">
                               <div>
                                 <p className="text-[10px] text-harbour-400 font-bold uppercase tracking-widest">Total to Pay</p>
-                                <h4 className="text-2xl font-serif-sturdy">RM {selectedPackage.price}</h4>
+                                <h4 className="text-2xl font-serif-sturdy">RM {selectedPackage?.price || 0}</h4>
                               </div>
                               <button 
                                 onClick={() => handleBookingConfirm('package')}

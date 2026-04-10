@@ -1664,27 +1664,6 @@ const calculateProfileProgress = (profile: any) => {
   return total;
 };
 
-const PhoneFrame = ({ children }: { children: React.ReactNode }) => {
-  return (
-    <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4 sm:p-8">
-      <div className="relative w-full max-w-[400px] aspect-[9/19.5] bg-black rounded-[3.5rem] border-[12px] border-zinc-900 shadow-2xl overflow-hidden ring-1 ring-white/10">
-        {/* Notch/Dynamic Island area */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-7 bg-zinc-900 rounded-b-3xl z-[500] flex items-center justify-center">
-          <div className="w-12 h-1 bg-zinc-800 rounded-full" />
-        </div>
-        
-        {/* Content */}
-        <div className="absolute inset-0 overflow-hidden bg-atmospheric-dark">
-          {children}
-        </div>
-
-        {/* Home Indicator */}
-        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 w-32 h-1.5 bg-white/10 rounded-full z-[500] pointer-events-none" />
-      </div>
-    </div>
-  );
-};
-
 export default function App() {
   const isDark = true;
   const [view, setView] = useState<View>('auth');
@@ -8814,9 +8793,8 @@ export default function App() {
 
 
   return (
-    <PhoneFrame>
-      <div className={`h-full font-sans transition-colors duration-500 overflow-hidden ${true ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'}`}>
-        <div className="w-full h-full relative overflow-hidden flex flex-col">
+    <div className={`h-screen font-sans transition-colors duration-500 overflow-hidden ${true ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'}`}>
+      <div className="w-full h-full relative overflow-hidden flex flex-col">
         {authLoading ? (
           <div className="h-full flex items-center justify-center bg-black">
             <div className="flex flex-col items-center gap-4">
@@ -9957,8 +9935,7 @@ export default function App() {
           );
         })()
       )}
-        </div>
       </div>
-    </PhoneFrame>
+    </div>
   );
 }

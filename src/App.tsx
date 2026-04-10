@@ -2791,7 +2791,7 @@ export default function App() {
   const [isWithdrawing, setIsWithdrawing] = useState<'idle' | 'processing' | 'success'>('idle');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [showSetupDetails, setShowSetupDetails] = useState(false);
-  const [mentorProfileExpandedSection, setMentorProfileExpandedSection] = useState<string | null>(null);
+  const [mentorProfileExpandedSections, setMentorProfileExpandedSections] = useState<string[]>([]);
   const [sessionSaveSuccess, setSessionSaveSuccess] = useState(false);
   const [newCert, setNewCert] = useState({ title: '', issuer: '', year: '' });
   const [isAddingCert, setIsAddingCert] = useState(false);
@@ -3504,8 +3504,8 @@ export default function App() {
     ];
 
     return (
-      <div className={`h-full flex flex-col ${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'} relative overflow-hidden`}>
-        <div className="flex-1 overflow-y-auto scrollbar-hide pb-40">
+      <div className={`h-full flex flex-col ${dark ? 'bg-atmospheric-dark text-white' : 'bg-white text-zinc-900'} overflow-hidden`}>
+        <div className="flex-1 overflow-y-auto scrollbar-hide">
           <div className="relative h-64 overflow-hidden">
           {selectedMentor.introVideoUrl ? (
             <video
@@ -3642,16 +3642,14 @@ export default function App() {
                     if (section.id === 'schedule') {
                       setShowScheduleSheet(true);
                     } else {
-                      const isExpanding = mentorProfileExpandedSection !== section.id;
-                      setMentorProfileExpandedSection(isExpanding ? section.id : null);
-                      if (isExpanding) {
-                        setTimeout(() => {
-                          document.getElementById(`section-${section.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        }, 100);
-                      }
+                      setMentorProfileExpandedSections(prev => 
+                        prev.includes(section.id) 
+                          ? prev.filter(id => id !== section.id) 
+                          : [...prev, section.id]
+                      );
                     }
                   }}
-                  className="w-full flex items-center justify-between py-2"
+                  className={`w-full flex items-center justify-between py-3 px-2 -mx-2 rounded-2xl transition-all duration-300 group ${dark ? 'hover:bg-white/5' : 'hover:bg-black/5'}`}
                 >
                   <div className="flex items-center gap-3">
                     <section.icon size={18} className={dark ? 'text-white/40' : 'text-zinc-400'} />
@@ -3660,12 +3658,12 @@ export default function App() {
                       {section.subtext && <span className={`text-[10px] block ${dark ? 'text-white/40' : 'text-zinc-500'}`}>{section.subtext}</span>}
                     </div>
                   </div>
-                  <motion.div animate={{ rotate: mentorProfileExpandedSection === section.id ? 180 : 0 }}>
-                    <ChevronRight size={16} className={dark ? 'text-white/20' : 'text-zinc-300'} />
+                  <motion.div animate={{ rotate: mentorProfileExpandedSections.includes(section.id) ? 180 : 0 }}>
+                    <ChevronRight size={16} className={`transition-colors ${dark ? 'text-white/20 group-hover:text-white/60' : 'text-zinc-300 group-hover:text-zinc-500'}`} />
                   </motion.div>
                 </button>
                 <AnimatePresence>
-                  {mentorProfileExpandedSection === section.id && (
+                  {mentorProfileExpandedSections.includes(section.id) && (
                     <motion.div
                       initial={{ height: 0, opacity: 0 }}
                       animate={{ height: 'auto', opacity: 1 }}
@@ -3766,7 +3764,7 @@ export default function App() {
       </div>
 
         {/* Sticky Bottom */}
-        <div className={`absolute bottom-0 left-0 right-0 p-6 pb-10 backdrop-blur-2xl border-t flex flex-col gap-3 z-[110] ${dark ? 'bg-black/95 border-white/10' : 'bg-white/95 border-black/5'}`}>
+        <div className={`flex-shrink-0 p-6 pb-8 backdrop-blur-2xl border-t flex flex-col gap-3 z-[110] ${dark ? 'bg-black/95 border-white/10' : 'bg-white/95 border-black/5'}`}>
           <div className="flex items-center gap-3 w-full">
             {isStudent && (
               <button 
